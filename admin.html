@@ -21,7 +21,7 @@
     .row { display: flex; gap: 10px; align-items: flex-end; }
     .row > .grow { flex: 1; }
     label.check { display: flex; align-items: center; gap: 8px; margin: 0 0 14px; font-weight: 600; cursor: pointer; }
-    label.check input { width: 20px; height: 20px; }
+    label.check input { width: 20px; height: 20px; flex: none; }
     .opts-head { margin: 4px 0 6px; font-weight: 600; }
     .opt-edit { display: flex; gap: 8px; align-items: center; padding: 6px 0; border-top: 1px solid var(--line); }
     .opt-edit input { margin-top: 0; }
@@ -38,6 +38,18 @@
     }
     .toast.bad { background: var(--danger); }
     .x { width: 38px; height: 38px; padding: 0; flex: none; }
+    .group-label { font-weight: 600; margin-bottom: 6px; }
+    .img-field { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 4px 0 14px; }
+    .img-preview {
+      width: 140px; min-height: 90px; display: grid; place-items: center; overflow: hidden;
+      border: 1px dashed #cfc6be; border-radius: 8px; background: #faf8f6;
+    }
+    .img-preview img { display: block; width: 100%; height: auto; }
+    .img-preview.photo img { aspect-ratio: 16 / 10; object-fit: cover; }
+    .img-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .preview-line { margin: 4px 0 0; padding: 10px 12px; border-radius: 8px; background: var(--accent-soft); }
+    .sub-card { border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+    .sub-card h3 { margin: 0 0 10px; font-size: 1rem; }
   </style>
 </head>
 <body>
@@ -52,12 +64,13 @@
   <script src="common.js"></script>
   <script>
   (function () {
-    const { api, h, fill } = Crust;
+    const { api, h, fill, driveImg } = Crust;
     const root = document.getElementById('admin');
     const toolbarSlot = document.getElementById('toolbar-slot');
     const PW_KEY = 'crust_admin_pw';
 
     const S = { pw: null, menu: null, saved: [], dirty: false, defaultEmail: '', sheetUrl: '' };
+    const previews = {};   // image id -> local copy, so new uploads show instantly
     const uid = (p) => p + Math.random().toString(36).slice(2, 10);
 
     function readPw() { try { return sessionStorage.getItem(PW_KEY); } catch (e) { return null; } }
@@ -142,6 +155,12 @@
       fill(root,
         h('h2', {}, 'Order settings'),
         settingsCard(m),
+        h('h2', {}, 'Logo and instructions'),
+        brandingCard(m),
+        h('h2', {}, 'Pickup'),
+        pickupCard(m),
+        h('h2', {}, 'Payment'),
+        paymentCard(m),
         h('h2', {}, 'Menu items'),
         h('p', { class: 'muted' }, 'Each item card below matches what customers see. Changes go live when you press Publish.'),
         m.items.map(itemEditor),
@@ -160,7 +179,7 @@
         : h('input', { type: attrs.type || 'text', placeholder: attrs.placeholder, class: attrs.class,
                        inputmode: attrs.inputmode, maxlength: attrs.maxlength, 'aria-label': attrs.aria });
       el.value = obj[prop] === undefined || obj[prop] === null ? '' : String(obj[prop]);
-      el.addEventListener('input', () => { obj[prop] = el.value; markDirty(); });
+      el.addEventListener('input', () => { obj[prop] = el.value; markDirty(); if (attrs.onInput) attrs.onInput(); });
       return el;
     }
 
@@ -173,38 +192,187 @@
     const field = (label, control, hint) =>
       h('label', { class: 'field' }, label, hint ? h('span', { class: 'hint' }, ' ' + hint) : null, control);
 
+    function listEditor(arr, opts) {
+      return h('div', {},
+        arr.map((v, i) => h('div', { class: 'list-row' },
+          textIn(arr, i, { type: opts.type, placeholder: opts.placeholder, maxlength: opts.maxlength,
+                           aria: (opts.aria || 'Entry') + ' ' + (i + 1), onInput: opts.onChange }),
+          h('button', { class: 'btn small danger x', type: 'button', 'aria-label': 'Remove', title: 'Remove',
+            onclick: () => { arr.splice(i, 1); markDirty(); renderEditor(); } }, '×'))),
+        h('button', { class: 'btn small secondary', type: 'button', onclick: (ev) => {
+          const box = ev.target.parentNode;
+          arr.push(''); markDirty(); renderEditor();
+          const id = box.id;
+          const rows = id ? document.querySelectorAll('#' + id + ' .list-row input') : [];
+          if (rows.length) rows[rows.length - 1].focus();
+        } }, opts.addLabel));
+    }
+
     function settingsCard(m) {
       return h('section', { class: 'card' },
         field('Menu title', textIn(m, 'title', { maxlength: 100 }), '(shown at the top of the order page)'),
         field('Intro message', textIn(m, 'intro', { multiline: true, maxlength: 1000 }), '(optional)'),
         checkIn(m, 'ordersOpen', 'Taking orders (uncheck to close the order form)'),
         field('Message shown when orders are closed', textIn(m, 'closedMessage', { maxlength: 300 })),
-        h('div', { class: 'field' }, h('div', { style: 'font-weight:600;margin-bottom:6px' }, 'Pickup options'),
-          listEditor(m.pickupOptions, 'e.g. Saturday, Nov 21, 9am to noon', '+ Add pickup option')),
-        field('Payment note', textIn(m, 'paymentNote', { maxlength: 300 }), '(shown before the Place order button)'),
         field('Send new orders to', textIn(m, 'notifyEmail', { type: 'email', placeholder: S.defaultEmail, maxlength: 200 }),
           S.defaultEmail ? '(leave blank to use ' + S.defaultEmail + ')' : ''),
         checkIn(m, 'sendCustomerCopy', 'Email customers a copy of their order (when they give an email)')
       );
     }
 
-    function listEditor(arr, placeholder, addLabel) {
-      return h('div', {},
-        arr.map((v, i) => h('div', { class: 'list-row' },
-          textIn(arr, i, { placeholder, aria: 'Pickup option ' + (i + 1) }),
-          h('button', { class: 'btn small danger x', type: 'button', 'aria-label': 'Remove', title: 'Remove',
-            onclick: () => { arr.splice(i, 1); markDirty(); renderEditor(); } }, '×'))),
-        h('button', { class: 'btn small secondary', type: 'button', onclick: () => {
-          arr.push(''); markDirty(); renderEditor();
-          const rows = document.querySelectorAll('.list-row input');
-          if (rows.length) rows[rows.length - 1].focus();
-        } }, addLabel));
+    function brandingCard(m) {
+      const steps = listEditor(m.steps, { placeholder: 'e.g. Pick your items', maxlength: 60, aria: 'Step', addLabel: '+ Add step' });
+      steps.id = 'steps-list';
+      return h('section', { class: 'card' },
+        h('div', { class: 'group-label' }, 'Logo ', h('span', { class: 'hint' }, '(shown at the top of the order page and in customer emails)')),
+        imageField(m, 'logo', 'logo', 'logo'),
+        h('div', { class: 'group-label' }, '"How to order" steps ', h('span', { class: 'hint' }, '(keep each to 3 or 4 words)')),
+        steps
+      );
     }
+
+    function pickupCard(m) {
+      const w = m.weekly;
+      const preview = h('p', { class: 'preview-line' });
+      const refresh = () => {
+        const p = Crust.nextPickup(w);
+        preview.textContent = p
+          ? 'Right now customers see: pickup ' + p.label + ', orders close 11:59 pm ' + p.cutoffLabel + '.'
+          : 'No upcoming pickup date. Check the weeks off list.';
+      };
+      const mode = (val, label) => {
+        const r = h('input', { type: 'radio', name: 'pickupMode', value: val, checked: m.pickupMode === val });
+        r.addEventListener('change', () => { m.pickupMode = val; markDirty(); renderEditor(); });
+        return h('label', { class: 'check' }, r, label);
+      };
+      const daySelect = (prop) => {
+        const s = h('select', {}, Crust.DAYS.map((d, i) => h('option', { value: String(i) }, d)));
+        s.value = String(w[prop]);
+        s.addEventListener('change', () => { w[prop] = Number(s.value); markDirty(); refresh(); });
+        return s;
+      };
+      const card = h('section', { class: 'card' },
+        mode('weekly', 'Same day every week (date updates automatically)'),
+        mode('list', 'Specific dates I type in'));
+
+      if (m.pickupMode === 'weekly') {
+        const skips = listEditor(w.skipDates, { type: 'date', aria: 'Week off', addLabel: '+ Add a week off', onChange: refresh });
+        skips.id = 'skip-list';
+        card.append(
+          h('div', { class: 'row' },
+            h('div', { class: 'grow' }, field('Pickup day', daySelect('pickupDay'))),
+            h('div', { class: 'grow' }, field('Last day to order', daySelect('cutoffDay')))),
+          field('Pickup time', textIn(w, 'time', { placeholder: 'e.g. 9am to noon', maxlength: 60, onInput: refresh }), '(optional)'),
+          h('div', { class: 'group-label' }, 'Weeks off ', h('span', { class: 'hint' }, '(pickup dates with no baking; orders roll to the next week)')),
+          skips,
+          preview);
+        refresh();
+      } else {
+        const list = listEditor(m.pickupOptions, { placeholder: 'e.g. Saturday, Dec 20, 9am to noon', maxlength: 120, aria: 'Pickup option', addLabel: '+ Add pickup option' });
+        list.id = 'pickup-list';
+        card.append(h('div', { class: 'group-label' }, 'Pickup options customers choose from'), list);
+      }
+      return card;
+    }
+
+    function paymentCard(m) {
+      const p = m.payments;
+      return h('section', { class: 'card' },
+        field('Order disclaimer', textIn(m, 'disclaimer', { multiline: true, maxlength: 400 }),
+          '(shown at checkout, after ordering, and in the customer email)'),
+        h('div', { class: 'sub-card' }, h('h3', {}, 'Venmo'),
+          field('Venmo username', textIn(p.venmo, 'handle', { placeholder: 'e.g. Sarah-Ayers-42', maxlength: 40 }), '(without the @; leave blank to hide Venmo)'),
+          h('div', { class: 'group-label' }, 'QR code'),
+          imageField(p.venmo, 'qr', 'qr', 'venmo-qr')),
+        h('div', { class: 'sub-card' }, h('h3', {}, 'Cash App'),
+          field('$Cashtag', textIn(p.cashapp, 'handle', { placeholder: 'e.g. Sayers2014', maxlength: 40 }), '(without the $; leave blank to hide Cash App)'),
+          h('div', { class: 'group-label' }, 'QR code'),
+          imageField(p.cashapp, 'qr', 'qr', 'cashapp-qr'))
+      );
+    }
+
+    /* ---------- Image uploads ---------- */
+
+    function imageField(obj, prop, kind, name) {
+      const box = h('div', { class: 'img-field' });
+      const draw = () => {
+        const id = obj[prop];
+        const input = h('input', { type: 'file', accept: 'image/*', hidden: true });
+        const status = h('span', { class: 'muted' });
+        const upBtn = h('button', { class: 'btn small secondary', type: 'button', onclick: () => input.click() },
+          id ? 'Replace' : 'Upload');
+        input.addEventListener('change', async () => {
+          const file = input.files && input.files[0];
+          if (!file) return;
+          upBtn.disabled = true; status.textContent = 'Uploading…';
+          try {
+            const img = await prepareImage(file, kind);
+            const d = await adminCall({ action: 'adminUploadImage', data: img.base64, mime: img.mime, name });
+            previews[d.id] = img.dataUrl;
+            obj[prop] = d.id;
+            markDirty(); draw();
+            toast('Image uploaded. Press Publish to make it live.');
+          } catch (e) {
+            upBtn.disabled = false; status.textContent = '';
+            toast(e.message, true);
+          }
+        });
+        fill(box,
+          h('div', { class: 'img-preview ' + kind },
+            id ? driveImg(id, { preview: previews[id], width: 600, alt: '' }) : h('span', { class: 'muted' }, 'No image')),
+          h('div', { class: 'img-actions' }, upBtn,
+            id ? h('button', { class: 'btn small danger', type: 'button',
+              onclick: () => { obj[prop] = ''; markDirty(); draw(); } }, 'Remove') : null,
+            status, input));
+      };
+      draw();
+      return box;
+    }
+
+    // Shrinks photos before uploading. Logos and QR codes stay PNG so they stay sharp.
+    function prepareImage(file, kind) {
+      return new Promise((resolve, reject) => {
+        const url = URL.createObjectURL(file);
+        const img = new Image();
+        img.onload = () => {
+          URL.revokeObjectURL(url);
+          const max = kind === 'photo' ? 1400 : 900;
+          const scale = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+          const w = Math.max(1, Math.round(img.naturalWidth * scale));
+          const ht = Math.max(1, Math.round(img.naturalHeight * scale));
+          const draw = (whiteBg) => {
+            const c = document.createElement('canvas');
+            c.width = w; c.height = ht;
+            const ctx = c.getContext('2d');
+            if (whiteBg) { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, ht); }
+            ctx.imageSmoothingQuality = 'high';
+            ctx.drawImage(img, 0, 0, w, ht);
+            return c;
+          };
+          let mime = kind === 'photo' ? 'image/jpeg' : 'image/png';
+          let dataUrl = draw(mime === 'image/jpeg').toDataURL(mime, 0.85);
+          if (mime === 'image/png' && dataUrl.length > 3000000) {
+            mime = 'image/jpeg';
+            dataUrl = draw(true).toDataURL(mime, 0.9);
+          }
+          resolve({ dataUrl, mime, base64: dataUrl.slice(dataUrl.indexOf(',') + 1) });
+        };
+        img.onerror = () => {
+          URL.revokeObjectURL(url);
+          reject(new Error("Couldn't read that image. Try a JPG or PNG."));
+        };
+        img.src = url;
+      });
+    }
+
+    /* ---------- Menu items ---------- */
 
     function itemEditor(item, idx) {
       const items = S.menu.items;
       const card = h('section', { class: 'card item edit' + (item.soldOut ? ' is-soldout' : ''), id: 'item-' + item.id });
       fill(card,
+        h('div', { class: 'group-label' }, 'Photo ', h('span', { class: 'hint' }, '(optional)')),
+        imageField(item, 'image', 'photo', item.name || 'item'),
         field('Item name', textIn(item, 'name', { class: 'name-input', maxlength: 100 })),
         h('div', { class: 'row' },
           h('div', { class: 'grow' }, field('Badge', textIn(item, 'badge', { placeholder: 'e.g. Last Chance, New', maxlength: 30 }), '(optional)')),
@@ -252,20 +420,23 @@
     }
 
     function addItem() {
-      const it = { id: uid('i'), name: '', description: '', badge: '', soldOut: false,
+      const it = { id: uid('i'), name: '', description: '', badge: '', soldOut: false, image: '',
                    options: [{ id: uid('o'), label: '', price: '' }] };
       S.menu.items.push(it);
       markDirty(); renderEditor();
       const card = document.getElementById('item-' + it.id);
       card.scrollIntoView({ block: 'center' });
-      card.querySelector('input').focus();
+      card.querySelector('input.name-input').focus();
     }
 
     /* ---------- Publish ---------- */
 
     function problems() {
       const m = S.menu, out = [];
-      if (m.ordersOpen && !m.pickupOptions.some(p => String(p).trim())) {
+      if (m.ordersOpen && m.pickupMode === 'weekly' && !Crust.nextPickup(m.weekly)) {
+        out.push('There is no upcoming pickup date, so customers will see "no pickup dates open".');
+      }
+      if (m.ordersOpen && m.pickupMode === 'list' && !m.pickupOptions.some(p => String(p).trim())) {
         out.push('There are no pickup options, so customers won\'t be asked when they\'re picking up.');
       }
       m.items.forEach((it, i) => {
@@ -335,8 +506,7 @@
       try {
         const d = await adminCall({ action: 'adminSaveAs', name, menu: S.menu });
         S.saved = d.saved;
-        const keepDirty = S.dirty;
-        renderEditor(); S.dirty = keepDirty; updateStatus();
+        renderEditor();
         toast('Saved "' + name + '".');
       } catch (e) { toast(e.message, true); }
     }
@@ -357,8 +527,7 @@
       try {
         const d = await adminCall({ action: 'adminDeleteSaved', name });
         S.saved = d.saved;
-        const keepDirty = S.dirty;
-        renderEditor(); S.dirty = keepDirty; updateStatus();
+        renderEditor();
         toast('Deleted "' + name + '".');
       } catch (e) { toast(e.message, true); }
     }

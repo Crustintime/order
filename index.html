@@ -7,8 +7,9 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <header class="site">
-    <h1>Crust In Time</h1>
+  <header class="site" id="site-header">
+    <div id="logo-slot"></div>
+    <h1 id="site-name">Crust In Time</h1>
     <p class="sub" id="menu-title">Breads &amp; baked goods</p>
   </header>
 
@@ -27,13 +28,13 @@
   <script src="common.js"></script>
   <script>
   (function () {
-    const { api, h, fill, money, price } = Crust;
+    const { api, h, fill, money, price, driveImg, payLinks } = Crust;
     const app = document.getElementById('app');
     const bar = document.getElementById('totalbar');
 
     let menu = null;
     let qty = {};          // "itemId|optionId" -> quantity
-    let steppers = {};     // "itemId|optionId" -> { out, minus }
+    let steppers = {};     // "itemId|optionId" -> { out, minus, plus }
     let sending = false;
 
     const keyOf = (item, opt) => item.id + '|' + opt.id;
@@ -45,11 +46,26 @@
         const data = await api.getMenu();
         menu = data.menu;
         qty = {};
+        renderHeader();
         renderForm();
       } catch (e) {
         fill(app, h('div', { class: 'card' },
           h('p', { class: 'error' }, e.message),
           h('button', { class: 'btn secondary', type: 'button', onclick: load }, 'Try again')));
+      }
+    }
+
+    function renderHeader() {
+      document.getElementById('menu-title').textContent = menu.title;
+      document.title = menu.title + ' | Crust In Time';
+      const slot = document.getElementById('logo-slot');
+      const name = document.getElementById('site-name');
+      if (menu.logo) {
+        fill(slot, driveImg(menu.logo, { alt: 'Crust In Time', class: 'logo', width: 600, lazy: false }));
+        name.classList.add('sr-only');
+      } else {
+        fill(slot);
+        name.classList.remove('sr-only');
       }
     }
 
@@ -73,19 +89,27 @@
 
     /* ---------- Order form ---------- */
 
-    function renderForm() {
-      document.getElementById('menu-title').textContent = menu.title;
-      document.title = menu.title + ' | Crust In Time';
-      steppers = {};
+    function stepsCard() {
+      if (!menu.steps || !menu.steps.length) return null;
+      return h('section', { class: 'card steps-card' },
+        h('h2', { class: 'steps-title' }, 'How to order'),
+        h('ol', { class: 'steps' }, menu.steps.map(s => h('li', {}, s))));
+    }
 
-      if (!menu.ordersOpen) {
-        fill(app, h('div', { class: 'card notice center' }, menu.closedMessage));
+    function renderForm() {
+      steppers = {};
+      const noPickup = menu.pickupMode === 'weekly' && !menu.pickup;
+
+      if (!menu.ordersOpen || noPickup) {
+        fill(app, h('div', { class: 'card notice center' },
+          menu.ordersOpen ? 'There are no pickup dates open right now. Check back soon!' : menu.closedMessage));
         return;
       }
 
       const orderable = menu.items.filter(i => i.options.length);
       fill(app,
         menu.intro ? h('p', { class: 'intro' }, menu.intro) : null,
+        stepsCard(),
         h('h2', {}, 'Choose your items'),
         orderable.length ? orderable.map(itemCard) : h('p', { class: 'muted' }, 'No items are on the menu right now.'),
         detailsForm()
@@ -95,6 +119,7 @@
 
     function itemCard(item) {
       return h('section', { class: 'card item' + (item.soldOut ? ' is-soldout' : '') },
+        item.image ? driveImg(item.image, { alt: item.name, class: 'item-photo', width: 900 }) : null,
         h('div', { class: 'item-head' },
           h('h3', { class: 'item-name' }, item.name),
           item.soldOut ? h('span', { class: 'badge soldout' }, 'Sold out')
@@ -124,15 +149,41 @@
       update();
     }
 
-    function detailsForm() {
+    function pickupField() {
+      if (menu.pickupMode === 'weekly') {
+        return h('div', { class: 'field pickup-box', id: 'pickup-box' },
+          h('div', {}, 'Pickup'),
+          h('div', { class: 'pickup-date' }, menu.pickup.label),
+          h('div', { class: 'hint' }, 'Orders for this pickup close at 11:59 pm on ' + menu.pickup.cutoffLabel + '.'));
+      }
       const pickups = menu.pickupOptions || [];
-      const pickupSelect = pickups.length
-        ? h('label', { class: 'field' }, 'Pickup',
-            h('select', { name: 'pickup', required: true },
-              pickups.length > 1 ? h('option', { value: '' }, 'Choose a pickup time…') : null,
-              pickups.map(p => h('option', { value: p }, p))))
-        : null;
+      if (!pickups.length) return null;
+      return h('label', { class: 'field' }, 'Pickup',
+        h('select', { name: 'pickup', required: true },
+          pickups.length > 1 ? h('option', { value: '' }, 'Choose a pickup time…') : null,
+          pickups.map(p => h('option', { value: p }, p))));
+    }
 
+    function paymentInfo() {
+      const links = payLinks(menu.payments);
+      return h('div', {},
+        h('h2', {}, 'Payment'),
+        h('div', { class: 'card' },
+          menu.disclaimer ? h('p', { class: 'disclaimer' }, menu.disclaimer) : null,
+          links.length ? [
+            menu.pickupMode === 'weekly' && menu.pickup
+              ? h('p', { style: 'margin:12px 0 0' }, 'Payment is due by ', h('strong', {}, '11:59 pm ' + menu.pickup.cutoffLabel), '.')
+              : null,
+            h('p', { class: 'muted', style: 'margin:12px 0' },
+              'After you place your order, you\'ll get Venmo and Cash App buttons with your exact total.'),
+            h('div', { class: 'pay-grid' }, links.map(l => h('div', { class: 'pay-card' },
+              l.qr ? driveImg(l.qr, { alt: l.label + ' QR code', class: 'qr', width: 600 }) : null,
+              h('div', { class: 'pay-name' }, l.label),
+              h('div', { class: 'muted' }, l.handle))))
+          ] : null));
+    }
+
+    function detailsForm() {
       return h('form', { id: 'details', onsubmit: submit },
         h('h2', {}, 'Your details'),
         h('div', { class: 'card' },
@@ -142,13 +193,13 @@
             h('input', { type: 'tel', name: 'phone', autocomplete: 'tel', required: true, maxlength: 30 })),
           h('label', { class: 'field' }, 'Email ', h('span', { class: 'hint' }, '(optional, for a copy of your order)'),
             h('input', { type: 'email', name: 'email', autocomplete: 'email', maxlength: 120 })),
-          pickupSelect,
+          pickupField(),
           h('label', { class: 'field' }, 'Notes ', h('span', { class: 'hint' }, '(optional)'),
             h('textarea', { name: 'notes', maxlength: 1000, placeholder: 'Allergies, special requests, etc.' }))
         ),
         h('h2', {}, 'Your order'),
         h('div', { class: 'card', id: 'summary' }),
-        menu.paymentNote ? h('p', { class: 'muted' }, menu.paymentNote) : null,
+        paymentInfo(),
         h('p', { class: 'error', id: 'form-error', role: 'alert' }),
         h('button', { class: 'btn block', type: 'submit', id: 'submit-btn' }, 'Place order')
       );
@@ -196,6 +247,7 @@
         phone: f.elements.phone.value.trim(),
         email: f.elements.email.value.trim(),
         pickup: f.elements.pickup ? f.elements.pickup.value : '',
+        pickupDate: menu.pickupMode === 'weekly' && menu.pickup ? menu.pickup.date : '',
         notes: f.elements.notes.value.trim()
       };
       if (customer.phone.replace(/\D/g, '').length < 10) {
@@ -216,6 +268,7 @@
         });
         renderConfirmation(res, customer);
       } catch (e) {
+        if (e.code === 'pickup_changed') await refreshPickup();
         setError(e.message);
         btn.disabled = false;
         btn.textContent = 'Place order';
@@ -224,11 +277,39 @@
       }
     }
 
+    // The Wednesday deadline passed while the page was open: show the new date.
+    async function refreshPickup() {
+      try {
+        const data = await api.getMenu();
+        menu.pickup = data.menu.pickup;
+        const box = document.getElementById('pickup-box');
+        if (box && menu.pickup) box.replaceWith(pickupField());
+      } catch (e) { /* the error message already explains */ }
+    }
+
     /* ---------- After submitting ---------- */
+
+    function summaryText(res, customer) {
+      return ['Crust In Time order #' + res.orderNo, 'Name: ' + customer.name,
+        res.pickup ? 'Pickup: ' + res.pickup : '',
+        ...res.lines.map(l => l.qty + ' x ' + l.item + (l.option ? ' (' + l.option + ')' : '') + ' = ' + money(l.total)),
+        'Total: ' + money(res.total), menu.disclaimer || ''].filter(Boolean).join('\n');
+    }
+
+    function saveCopy(res, customer) {
+      const touch = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+      if (touch && navigator.share) {
+        navigator.share({ title: 'Crust In Time order #' + res.orderNo, text: summaryText(res, customer) }).catch(() => {});
+      } else {
+        window.print();
+      }
+    }
 
     function renderConfirmation(res, customer) {
       bar.hidden = true;
       steppers = {};
+      const links = payLinks(menu.payments, res.total, res.orderNo);
+
       fill(app, h('section', { class: 'card' },
         h('h2', { style: 'margin-top:0' }, 'Thank you, ' + customer.name + '!'),
         h('p', {}, 'Your order ', h('strong', {}, '#' + res.orderNo), ' has been received.'),
@@ -237,11 +318,25 @@
           h('span', {}, l.qty + ' × ' + l.item + (l.option ? ' (' + l.option + ')' : '')),
           h('span', {}, money(l.total)))),
         h('div', { class: 'summary-line summary-total' }, h('span', {}, 'Total'), h('span', {}, money(res.total))),
-        res.paymentNote ? h('p', { class: 'muted' }, res.paymentNote) : null,
-        res.emailedCopy ? h('p', { class: 'muted' }, 'A copy was emailed to ' + customer.email + '.') : null,
+
+        menu.disclaimer ? h('p', { class: 'disclaimer', style: 'margin-top:18px' }, menu.disclaimer) : null,
+
+        links.length ? h('div', { class: 'pay-now' },
+          h('h3', {}, 'Pay ' + money(res.total) + (res.payBy ? ' by 11:59 pm ' + res.payBy : ' now')),
+          h('p', { class: 'muted' }, 'Please put ', h('strong', {}, 'order #' + res.orderNo), ' in your payment note.'),
+          h('div', { class: 'pay-grid' }, links.map(l => h('div', { class: 'pay-card' },
+            l.qr ? driveImg(l.qr, { alt: l.label + ' QR code', class: 'qr', width: 600 }) : null,
+            h('a', { class: 'btn block', href: l.url, target: '_blank', rel: 'noopener' }, 'Pay with ' + l.label),
+            h('div', { class: 'muted', style: 'margin-top:4px' }, l.handle))))
+        ) : null,
+
+        res.emailedCopy
+          ? h('p', { class: 'muted' }, 'A copy was emailed to ' + customer.email + '. If you don\'t see it, check your spam folder.')
+          : null,
         h('div', { class: 'btn-row noprint' },
-          h('button', { class: 'btn secondary', type: 'button', onclick: () => window.print() }, 'Print or save a copy'),
-          h('button', { class: 'btn', type: 'button', onclick: () => { window.scrollTo(0, 0); load(); } }, 'Start a new order'))
+          h('button', { class: 'btn secondary', type: 'button', onclick: () => saveCopy(res, customer) }, 'Save a copy'),
+          h('button', { class: 'btn', type: 'button', onclick: () => { window.scrollTo(0, 0); load(); } }, 'Start a new order')),
+        h('p', { class: 'muted noprint phone-only', style: 'font-size:.9rem' }, 'Tip: you can also take a screenshot of this page.')
       ));
       window.scrollTo(0, 0);
     }
