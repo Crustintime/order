@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Menu editor | Crust In Time</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    .toolbar {
+      position: sticky; top: 0; z-index: 20; background: #fff; border-bottom: 1px solid var(--line);
+      box-shadow: 0 2px 8px rgba(0,0,0,.04);
+    }
+    .toolbar-inner {
+      max-width: 720px; margin: 0 auto; padding: 10px 16px;
+      display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+    }
+    .toolbar .status { flex: 1; min-width: 160px; font-size: .95rem; }
+    .status.dirty { color: var(--danger); font-weight: 650; }
+    .item.edit .name-input { font-size: 1.1rem; font-weight: 650; }
+    .row { display: flex; gap: 10px; align-items: flex-end; }
+    .row > .grow { flex: 1; }
+    label.check { display: flex; align-items: center; gap: 8px; margin: 0 0 14px; font-weight: 600; cursor: pointer; }
+    label.check input { width: 20px; height: 20px; }
+    .opts-head { margin: 4px 0 6px; font-weight: 600; }
+    .opt-edit { display: flex; gap: 8px; align-items: center; padding: 6px 0; border-top: 1px solid var(--line); }
+    .opt-edit input { margin-top: 0; }
+    .opt-edit .label-in { flex: 1; }
+    .opt-edit .price-wrap { display: flex; align-items: center; gap: 4px; width: 110px; }
+    .item-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--line); }
+    .item-actions .spacer { flex: 1; }
+    .list-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+    .list-row input { margin-top: 0; flex: 1; }
+    .toast {
+      position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 30;
+      max-width: 92vw; padding: 12px 18px; border-radius: 8px;
+      background: #2b2420; color: #fff; box-shadow: 0 4px 16px rgba(0,0,0,.2);
+    }
+    .toast.bad { background: var(--danger); }
+    .x { width: 38px; height: 38px; padding: 0; flex: none; }
+  </style>
+</head>
+<body>
+  <div id="toolbar-slot"></div>
+  <header class="site">
+    <h1>Crust In Time</h1>
+    <p class="sub">Menu editor</p>
+  </header>
+  <main class="wrap" id="admin"><p class="muted center">Loading…</p></main>
+
+  <script src="config.js"></script>
+  <script src="common.js"></script>
+  <script>
+  (function () {
+    const { api, h, fill } = Crust;
+    const root = document.getElementById('admin');
+    const toolbarSlot = document.getElementById('toolbar-slot');
+    const PW_KEY = 'crust_admin_pw';
+
+    const S = { pw: null, menu: null, saved: [], dirty: false, defaultEmail: '', sheetUrl: '' };
+    const uid = (p) => p + Math.random().toString(36).slice(2, 10);
+
+    function readPw() { try { return sessionStorage.getItem(PW_KEY); } catch (e) { return null; } }
+    function writePw(v) {
+      try { v ? sessionStorage.setItem(PW_KEY, v) : sessionStorage.removeItem(PW_KEY); } catch (e) {}
+    }
+
+    async function adminCall(body) {
+      try {
+        return await api.post(Object.assign({}, body, { password: S.pw }));
+      } catch (e) {
+        if (e.code === 'bad_password' || e.code === 'no_password') {
+          S.pw = null; writePw(null); S.dirty = false;
+          showLogin(e.message);
+        }
+        throw e;
+      }
+    }
+
+    let toastTimer;
+    function toast(msg, bad) {
+      document.querySelectorAll('.toast').forEach(t => t.remove());
+      const t = h('div', { class: 'toast' + (bad ? ' bad' : ''), role: 'status' }, msg);
+      document.body.append(t);
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => t.remove(), bad ? 7000 : 4000);
+    }
+
+    /* ---------- Login ---------- */
+
+    function showLogin(message) {
+      fill(toolbarSlot);
+      const input = h('input', { type: 'password', name: 'pw', autocomplete: 'current-password', required: true });
+      const err = h('p', { class: 'error' }, message || '');
+      const btn = h('button', { class: 'btn block', type: 'submit' }, 'Open editor');
+      fill(root, h('form', { class: 'card', onsubmit: async (ev) => {
+          ev.preventDefault();
+          btn.disabled = true; btn.textContent = 'Checking…'; err.textContent = '';
+          try {
+            await loadEditor(input.value);
+          } catch (e) {
+            err.textContent = e.message;
+            btn.disabled = false; btn.textContent = 'Open editor';
+          }
+        } },
+        h('label', { class: 'field' }, 'Admin password', input),
+        err, btn));
+      input.focus();
+    }
+
+    async function loadEditor(pw) {
+      const d = await api.post({ action: 'adminLoad', password: pw });
+      S.pw = pw; writePw(pw);
+      S.menu = d.menu; S.saved = d.saved || []; S.defaultEmail = d.defaultEmail || ''; S.sheetUrl = d.sheetUrl || '';
+      S.dirty = false;
+      renderEditor();
+    }
+
+    /* ---------- Editor ---------- */
+
+    function markDirty() { S.dirty = true; updateStatus(); }
+
+    function updateStatus() {
+      const st = document.getElementById('status');
+      const pub = document.getElementById('publish-btn');
+      if (!st || !pub) return;
+      st.textContent = S.dirty ? 'Unpublished changes' : 'Live menu is up to date';
+      st.className = 'status' + (S.dirty ? ' dirty' : '');
+      pub.disabled = !S.dirty;
+    }
+
+    function renderEditor() {
+      const m = S.menu;
+      fill(toolbarSlot, h('div', { class: 'toolbar' }, h('div', { class: 'toolbar-inner' },
+        h('span', { id: 'status', class: 'status' }),
+        h('a', { class: 'btn small secondary', href: 'index.html', target: '_blank', rel: 'noopener' }, 'Order page'),
+        S.sheetUrl ? h('a', { class: 'btn small secondary', href: S.sheetUrl, target: '_blank', rel: 'noopener' }, 'Orders sheet') : null,
+        h('button', { class: 'btn small', id: 'publish-btn', type: 'button', onclick: publish }, 'Publish'),
+        h('button', { class: 'btn small secondary', type: 'button', onclick: lock }, 'Lock')
+      )));
+
+      fill(root,
+        h('h2', {}, 'Order settings'),
+        settingsCard(m),
+        h('h2', {}, 'Menu items'),
+        h('p', { class: 'muted' }, 'Each item card below matches what customers see. Changes go live when you press Publish.'),
+        m.items.map(itemEditor),
+        h('button', { class: 'btn secondary block', type: 'button', onclick: addItem }, '+ Add item'),
+        h('h2', {}, 'Saved menus'),
+        savedCard()
+      );
+      updateStatus();
+    }
+
+    // Inputs write straight into the menu object as you type.
+    function textIn(obj, prop, attrs) {
+      attrs = attrs || {};
+      const el = attrs.multiline
+        ? h('textarea', { placeholder: attrs.placeholder, class: attrs.class, maxlength: attrs.maxlength })
+        : h('input', { type: attrs.type || 'text', placeholder: attrs.placeholder, class: attrs.class,
+                       inputmode: attrs.inputmode, maxlength: attrs.maxlength, 'aria-label': attrs.aria });
+      el.value = obj[prop] === undefined || obj[prop] === null ? '' : String(obj[prop]);
+      el.addEventListener('input', () => { obj[prop] = el.value; markDirty(); });
+      return el;
+    }
+
+    function checkIn(obj, prop, label, onChange) {
+      const el = h('input', { type: 'checkbox', checked: !!obj[prop] });
+      el.addEventListener('change', () => { obj[prop] = el.checked; markDirty(); if (onChange) onChange(el.checked); });
+      return h('label', { class: 'check' }, el, label);
+    }
+
+    const field = (label, control, hint) =>
+      h('label', { class: 'field' }, label, hint ? h('span', { class: 'hint' }, ' ' + hint) : null, control);
+
+    function settingsCard(m) {
+      return h('section', { class: 'card' },
+        field('Menu title', textIn(m, 'title', { maxlength: 100 }), '(shown at the top of the order page)'),
+        field('Intro message', textIn(m, 'intro', { multiline: true, maxlength: 1000 }), '(optional)'),
+        checkIn(m, 'ordersOpen', 'Taking orders (uncheck to close the order form)'),
+        field('Message shown when orders are closed', textIn(m, 'closedMessage', { maxlength: 300 })),
+        h('div', { class: 'field' }, h('div', { style: 'font-weight:600;margin-bottom:6px' }, 'Pickup options'),
+          listEditor(m.pickupOptions, 'e.g. Saturday, Nov 21, 9am to noon', '+ Add pickup option')),
+        field('Payment note', textIn(m, 'paymentNote', { maxlength: 300 }), '(shown before the Place order button)'),
+        field('Send new orders to', textIn(m, 'notifyEmail', { type: 'email', placeholder: S.defaultEmail, maxlength: 200 }),
+          S.defaultEmail ? '(leave blank to use ' + S.defaultEmail + ')' : ''),
+        checkIn(m, 'sendCustomerCopy', 'Email customers a copy of their order (when they give an email)')
+      );
+    }
+
+    function listEditor(arr, placeholder, addLabel) {
+      return h('div', {},
+        arr.map((v, i) => h('div', { class: 'list-row' },
+          textIn(arr, i, { placeholder, aria: 'Pickup option ' + (i + 1) }),
+          h('button', { class: 'btn small danger x', type: 'button', 'aria-label': 'Remove', title: 'Remove',
+            onclick: () => { arr.splice(i, 1); markDirty(); renderEditor(); } }, '×'))),
+        h('button', { class: 'btn small secondary', type: 'button', onclick: () => {
+          arr.push(''); markDirty(); renderEditor();
+          const rows = document.querySelectorAll('.list-row input');
+          if (rows.length) rows[rows.length - 1].focus();
+        } }, addLabel));
+    }
+
+    function itemEditor(item, idx) {
+      const items = S.menu.items;
+      const card = h('section', { class: 'card item edit' + (item.soldOut ? ' is-soldout' : ''), id: 'item-' + item.id });
+      fill(card,
+        field('Item name', textIn(item, 'name', { class: 'name-input', maxlength: 100 })),
+        h('div', { class: 'row' },
+          h('div', { class: 'grow' }, field('Badge', textIn(item, 'badge', { placeholder: 'e.g. Last Chance, New', maxlength: 30 }), '(optional)')),
+          checkIn(item, 'soldOut', 'Sold out', (on) => card.classList.toggle('is-soldout', on))),
+        field('Description', textIn(item, 'description', { multiline: true, maxlength: 1000 })),
+        h('div', { class: 'opts-head' }, 'Sizes and prices ', h('span', { class: 'hint' }, '(each line is something customers can add)')),
+        item.options.map((opt, oi) => h('div', { class: 'opt-edit' },
+          textIn(opt, 'label', { class: 'label-in', placeholder: 'e.g. Loaf, 4 pack, 6 pack variety', maxlength: 80, aria: 'Size or option name' }),
+          h('span', { class: 'price-wrap' }, '$', textIn(opt, 'price', { inputmode: 'decimal', placeholder: '0.00', aria: 'Price' })),
+          h('button', { class: 'btn small danger x', type: 'button', 'aria-label': 'Remove this size', title: 'Remove',
+            onclick: () => { item.options.splice(oi, 1); markDirty(); renderEditor(); } }, '×'))),
+        h('button', { class: 'btn small secondary', type: 'button', style: 'margin-top:8px',
+          onclick: () => { item.options.push({ id: uid('o'), label: '', price: '' }); markDirty(); renderEditor(); } }, '+ Add size / price'),
+        h('div', { class: 'item-actions' },
+          h('button', { class: 'btn small secondary', type: 'button', disabled: idx === 0,
+            onclick: () => move(idx, -1) }, '↑ Move up'),
+          h('button', { class: 'btn small secondary', type: 'button', disabled: idx === items.length - 1,
+            onclick: () => move(idx, 1) }, '↓ Move down'),
+          h('button', { class: 'btn small secondary', type: 'button', onclick: () => duplicate(idx) }, 'Duplicate'),
+          h('span', { class: 'spacer' }),
+          h('button', { class: 'btn small danger', type: 'button', onclick: () => {
+            if (!confirm('Remove "' + (item.name || 'this item') + '" from the menu?')) return;
+            items.splice(idx, 1); markDirty(); renderEditor();
+          } }, 'Remove item'))
+      );
+      return card;
+    }
+
+    function move(idx, dir) {
+      const items = S.menu.items;
+      const [it] = items.splice(idx, 1);
+      items.splice(idx + dir, 0, it);
+      markDirty(); renderEditor();
+      document.getElementById('item-' + it.id).scrollIntoView({ block: 'center' });
+    }
+
+    function duplicate(idx) {
+      const copy = JSON.parse(JSON.stringify(S.menu.items[idx]));
+      copy.id = uid('i');
+      copy.name = (copy.name || 'Item') + ' (copy)';
+      copy.options.forEach(o => { o.id = uid('o'); });
+      S.menu.items.splice(idx + 1, 0, copy);
+      markDirty(); renderEditor();
+      document.getElementById('item-' + copy.id).scrollIntoView({ block: 'center' });
+    }
+
+    function addItem() {
+      const it = { id: uid('i'), name: '', description: '', badge: '', soldOut: false,
+                   options: [{ id: uid('o'), label: '', price: '' }] };
+      S.menu.items.push(it);
+      markDirty(); renderEditor();
+      const card = document.getElementById('item-' + it.id);
+      card.scrollIntoView({ block: 'center' });
+      card.querySelector('input').focus();
+    }
+
+    /* ---------- Publish ---------- */
+
+    function problems() {
+      const m = S.menu, out = [];
+      if (m.ordersOpen && !m.pickupOptions.some(p => String(p).trim())) {
+        out.push('There are no pickup options, so customers won\'t be asked when they\'re picking up.');
+      }
+      m.items.forEach((it, i) => {
+        const name = String(it.name || '').trim() || 'Item #' + (i + 1);
+        if (!String(it.name || '').trim()) out.push('Item #' + (i + 1) + ' has no name.');
+        if (!it.options.length) out.push(name + ' has no sizes/prices, so customers can\'t order it.');
+        it.options.forEach(o => {
+          const p = String(o.price).replace(/[$,\s]/g, '');
+          if (p === '' || !isFinite(Number(p)) || Number(p) < 0) out.push(name + ': "' + (o.label || 'a size') + '" needs a valid price.');
+          else if (Number(p) === 0) out.push(name + ': "' + (o.label || 'a size') + '" is priced at $0.');
+        });
+      });
+      return out;
+    }
+
+    async function publish() {
+      const p = problems();
+      if (p.length && !confirm('Please check before publishing:\n\n• ' + p.join('\n• ') + '\n\nPublish anyway?')) return;
+      const btn = document.getElementById('publish-btn');
+      btn.disabled = true; btn.textContent = 'Publishing…';
+      try {
+        const d = await adminCall({ action: 'adminPublish', menu: S.menu });
+        S.menu = d.menu; S.dirty = false;
+        renderEditor();
+        toast('Published. The order page now shows this menu.');
+      } catch (e) {
+        if (document.getElementById('publish-btn')) { btn.textContent = 'Publish'; updateStatus(); toast(e.message, true); }
+      }
+    }
+
+    function lock() {
+      if (S.dirty && !confirm('You have unpublished changes. Lock the editor and lose them?')) return;
+      S.dirty = false; S.pw = null; writePw(null);
+      showLogin('Editor locked.');
+    }
+
+    /* ---------- Saved menus ---------- */
+
+    function savedCard() {
+      const nameIn = h('input', { type: 'text', placeholder: 'e.g. Fall, Christmas, Valentine\'s', maxlength: 60, 'aria-label': 'Name for this saved menu' });
+      const select = S.saved.length
+        ? h('select', { 'aria-label': 'Saved menus' }, S.saved.map(s => h('option', { value: s.name },
+            s.name + (s.saved ? ' (saved ' + new Date(s.saved).toLocaleDateString() + ')' : ''))))
+        : null;
+
+      return h('section', { class: 'card' },
+        h('p', { class: 'muted', style: 'margin-top:0' },
+          'Keep seasonal menus here and bring them back later. Saving or opening a menu does not change the live order page until you press Publish.'),
+        select
+          ? h('div', {},
+              h('label', { class: 'field' }, 'Saved menus', select),
+              h('div', { class: 'btn-row', style: 'margin-top:0;margin-bottom:18px' },
+                h('button', { class: 'btn small secondary', type: 'button', onclick: () => openSaved(select.value) }, 'Open in editor'),
+                h('button', { class: 'btn small danger', type: 'button', onclick: () => deleteSaved(select.value) }, 'Delete')))
+          : h('p', { class: 'muted' }, 'No saved menus yet.'),
+        h('div', { class: 'row' },
+          h('div', { class: 'grow' }, h('label', { class: 'field', style: 'margin:0' }, 'Save what\'s in the editor as', nameIn)),
+          h('button', { class: 'btn small', type: 'button', onclick: () => saveAs(nameIn.value) }, 'Save'))
+      );
+    }
+
+    async function saveAs(name) {
+      name = String(name || '').trim();
+      if (!name) return toast('Type a name for this menu first.', true);
+      if (S.saved.some(s => s.name.toLowerCase() === name.toLowerCase()) &&
+          !confirm('A saved menu called "' + name + '" already exists. Replace it?')) return;
+      try {
+        const d = await adminCall({ action: 'adminSaveAs', name, menu: S.menu });
+        S.saved = d.saved;
+        const keepDirty = S.dirty;
+        renderEditor(); S.dirty = keepDirty; updateStatus();
+        toast('Saved "' + name + '".');
+      } catch (e) { toast(e.message, true); }
+    }
+
+    async function openSaved(name) {
+      if (S.dirty && !confirm('Opening "' + name + '" replaces what\'s in the editor, and your unpublished changes will be lost. Continue?')) return;
+      try {
+        const d = await adminCall({ action: 'adminOpenSaved', name });
+        S.menu = d.menu;
+        renderEditor(); markDirty();
+        window.scrollTo(0, 0);
+        toast('Opened "' + name + '". Review it, then press Publish to make it live.');
+      } catch (e) { toast(e.message, true); }
+    }
+
+    async function deleteSaved(name) {
+      if (!confirm('Delete the saved menu "' + name + '"? This can\'t be undone.')) return;
+      try {
+        const d = await adminCall({ action: 'adminDeleteSaved', name });
+        S.saved = d.saved;
+        const keepDirty = S.dirty;
+        renderEditor(); S.dirty = keepDirty; updateStatus();
+        toast('Deleted "' + name + '".');
+      } catch (e) { toast(e.message, true); }
+    }
+
+    window.addEventListener('beforeunload', (e) => {
+      if (S.dirty) { e.preventDefault(); e.returnValue = ''; }
+    });
+
+    /* ---------- Start ---------- */
+    (async function init() {
+      if (!Crust.isConfigured()) {
+        fill(root, h('div', { class: 'card error' },
+          "This page isn't connected yet. Paste the Apps Script Web App URL into config.js."));
+        return;
+      }
+      const saved = readPw();
+      if (!saved) return showLogin();
+      try { await loadEditor(saved); }
+      catch (e) { showLogin(e.code === 'bad_password' ? '' : e.message); }
+    })();
+  })();
+  </script>
+</body>
+</html>

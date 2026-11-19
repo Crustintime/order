@@ -1,0 +1,111 @@
+/* Plain starter styles. Decoration comes later. */
+:root {
+  --ink: #2b2420;
+  --muted: #6b625c;
+  --line: #e4ddd6;
+  --bg: #faf8f6;
+  --card: #ffffff;
+  --accent: #7a4a2a;
+  --accent-soft: #f3e6da;
+  --danger: #a3322a;
+  --radius: 10px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 16px;
+  line-height: 1.45;
+  color: var(--ink);
+  background: var(--bg);
+}
+
+.wrap { max-width: 720px; margin: 0 auto; padding: 8px 16px 120px; }
+.center { text-align: center; }
+.muted { color: var(--muted); }
+
+header.site { text-align: center; padding: 28px 16px 4px; }
+header.site h1 { margin: 0; font-size: 1.9rem; letter-spacing: .01em; }
+header.site .sub { margin: 4px 0 0; font-size: 1.15rem; color: var(--muted); }
+
+h2 { font-size: 1.15rem; margin: 28px 0 10px; }
+.intro { white-space: pre-line; text-align: center; color: var(--muted); }
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin: 0 0 12px;
+}
+
+/* Menu items */
+.item-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.item-name { margin: 0; font-size: 1.1rem; font-weight: 650; }
+.badge {
+  font-size: .72rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+  background: var(--accent-soft); color: var(--accent);
+  padding: 2px 9px; border-radius: 999px;
+}
+.badge.soldout { background: #ececec; color: #666; }
+.desc { margin: 6px 0 10px; color: var(--muted); white-space: pre-line; }
+.is-soldout .item-name, .is-soldout .desc { opacity: .6; }
+
+.opt { display: flex; align-items: center; gap: 12px; padding: 8px 0; border-top: 1px solid var(--line); }
+.opt-label { flex: 1; }
+.opt-price { color: var(--muted); min-width: 52px; text-align: right; }
+
+.stepper { display: flex; align-items: center; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.stepper button {
+  width: 42px; height: 42px; border: 0; background: #f4f1ee; color: var(--ink);
+  font-size: 1.25rem; cursor: pointer;
+}
+.stepper button:disabled { opacity: .35; cursor: default; }
+.stepper output { width: 36px; text-align: center; font-weight: 650; }
+
+/* Forms */
+label.field { display: block; margin: 0 0 14px; font-weight: 600; }
+.hint { font-weight: 400; color: var(--muted); }
+input[type=text], input[type=tel], input[type=email], input[type=password], select, textarea {
+  display: block; width: 100%; margin-top: 4px; padding: 10px 12px;
+  font: inherit; color: inherit; background: #fff;
+  border: 1px solid #cfc6be; border-radius: 8px;
+}
+textarea { min-height: 84px; resize: vertical; }
+input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.btn {
+  display: inline-block; padding: 12px 18px; font: inherit; font-weight: 650; text-decoration: none; text-align: center;
+  color: #fff; background: var(--accent); border: 1px solid var(--accent); border-radius: 8px; cursor: pointer;
+}
+.btn.secondary { color: var(--accent); background: #fff; }
+.btn.danger { color: var(--danger); background: #fff; border-color: var(--danger); }
+.btn.small { padding: 6px 12px; font-size: .92rem; }
+.btn.block { display: block; width: 100%; }
+.btn:disabled { opacity: .55; cursor: default; }
+.btn-row { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+
+.error { color: var(--danger); font-weight: 600; }
+.notice { background: #fff7e8; border-color: #ecd9b0; }
+
+/* Order summary */
+.summary-line { display: flex; justify-content: space-between; gap: 12px; padding: 3px 0; }
+.summary-total { border-top: 1px solid var(--line); margin-top: 8px; padding-top: 8px; font-weight: 700; }
+
+/* Running total bar */
+.totalbar {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
+  background: #fff; border-top: 1px solid var(--line); box-shadow: 0 -2px 10px rgba(0,0,0,.06);
+}
+.totalbar-inner {
+  max-width: 720px; margin: 0 auto; padding: 10px 16px;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+}
+
+@media print {
+  .noprint { display: none !important; }
+  body { background: #fff; }
+  .card { border: 0; padding: 0; }
+}

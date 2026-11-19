@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Order | Crust In Time</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="site">
+    <h1>Crust In Time</h1>
+    <p class="sub" id="menu-title">Breads &amp; baked goods</p>
+  </header>
+
+  <main class="wrap" id="app">
+    <p class="muted center">Loading menu…</p>
+  </main>
+
+  <div class="totalbar noprint" id="totalbar" hidden>
+    <div class="totalbar-inner">
+      <span><strong id="bar-total">$0.00</strong> <span class="muted" id="bar-count"></span></span>
+      <a class="btn small" href="#details">Checkout</a>
+    </div>
+  </div>
+
+  <script src="config.js"></script>
+  <script src="common.js"></script>
+  <script>
+  (function () {
+    const { api, h, fill, money, price } = Crust;
+    const app = document.getElementById('app');
+    const bar = document.getElementById('totalbar');
+
+    let menu = null;
+    let qty = {};          // "itemId|optionId" -> quantity
+    let steppers = {};     // "itemId|optionId" -> { out, minus }
+    let sending = false;
+
+    const keyOf = (item, opt) => item.id + '|' + opt.id;
+
+    async function load() {
+      bar.hidden = true;
+      fill(app, h('p', { class: 'muted center' }, 'Loading menu…'));
+      try {
+        const data = await api.getMenu();
+        menu = data.menu;
+        qty = {};
+        renderForm();
+      } catch (e) {
+        fill(app, h('div', { class: 'card' },
+          h('p', { class: 'error' }, e.message),
+          h('button', { class: 'btn secondary', type: 'button', onclick: load }, 'Try again')));
+      }
+    }
+
+    function orderLines() {
+      const out = [];
+      menu.items.forEach(item => item.options.forEach(opt => {
+        const n = qty[keyOf(item, opt)] || 0;
+        if (n > 0) out.push({ item, opt, qty: n });
+      }));
+      return out;
+    }
+
+    function totals() {
+      const lines = orderLines();
+      return {
+        lines,
+        count: lines.reduce((s, l) => s + l.qty, 0),
+        cents: lines.reduce((s, l) => s + Math.round(l.opt.price * 100) * l.qty, 0)
+      };
+    }
+
+    /* ---------- Order form ---------- */
+
+    function renderForm() {
+      document.getElementById('menu-title').textContent = menu.title;
+      document.title = menu.title + ' | Crust In Time';
+      steppers = {};
+
+      if (!menu.ordersOpen) {
+        fill(app, h('div', { class: 'card notice center' }, menu.closedMessage));
+        return;
+      }
+
+      const orderable = menu.items.filter(i => i.options.length);
+      fill(app,
+        menu.intro ? h('p', { class: 'intro' }, menu.intro) : null,
+        h('h2', {}, 'Choose your items'),
+        orderable.length ? orderable.map(itemCard) : h('p', { class: 'muted' }, 'No items are on the menu right now.'),
+        detailsForm()
+      );
+      update();
+    }
+
+    function itemCard(item) {
+      return h('section', { class: 'card item' + (item.soldOut ? ' is-soldout' : '') },
+        h('div', { class: 'item-head' },
+          h('h3', { class: 'item-name' }, item.name),
+          item.soldOut ? h('span', { class: 'badge soldout' }, 'Sold out')
+                       : item.badge ? h('span', { class: 'badge' }, item.badge) : null),
+        item.description ? h('p', { class: 'desc' }, item.description) : null,
+        item.options.map(opt => optionRow(item, opt))
+      );
+    }
+
+    function optionRow(item, opt) {
+      const k = keyOf(item, opt);
+      const label = opt.label || 'Each';
+      const out = h('output', { 'aria-label': 'Quantity of ' + item.name + ', ' + label }, '0');
+      const minus = h('button', { type: 'button', 'aria-label': 'Remove one ' + item.name + ', ' + label,
+        onclick: () => change(k, -1) }, '−');
+      const plus = h('button', { type: 'button', 'aria-label': 'Add one ' + item.name + ', ' + label,
+        disabled: item.soldOut, onclick: () => change(k, 1) }, '+');
+      steppers[k] = { out, minus, plus };
+      return h('div', { class: 'opt' },
+        h('span', { class: 'opt-label' }, label),
+        h('span', { class: 'opt-price' }, price(opt.price)),
+        h('div', { class: 'stepper' }, minus, out, plus));
+    }
+
+    function change(k, delta) {
+      qty[k] = Math.max(0, Math.min(99, (qty[k] || 0) + delta));
+      update();
+    }
+
+    function detailsForm() {
+      const pickups = menu.pickupOptions || [];
+      const pickupSelect = pickups.length
+        ? h('label', { class: 'field' }, 'Pickup',
+            h('select', { name: 'pickup', required: true },
+              pickups.length > 1 ? h('option', { value: '' }, 'Choose a pickup time…') : null,
+              pickups.map(p => h('option', { value: p }, p))))
+        : null;
+
+      return h('form', { id: 'details', onsubmit: submit },
+        h('h2', {}, 'Your details'),
+        h('div', { class: 'card' },
+          h('label', { class: 'field' }, 'Name',
+            h('input', { type: 'text', name: 'cname', autocomplete: 'name', required: true, maxlength: 80 })),
+          h('label', { class: 'field' }, 'Phone',
+            h('input', { type: 'tel', name: 'phone', autocomplete: 'tel', required: true, maxlength: 30 })),
+          h('label', { class: 'field' }, 'Email ', h('span', { class: 'hint' }, '(optional, for a copy of your order)'),
+            h('input', { type: 'email', name: 'email', autocomplete: 'email', maxlength: 120 })),
+          pickupSelect,
+          h('label', { class: 'field' }, 'Notes ', h('span', { class: 'hint' }, '(optional)'),
+            h('textarea', { name: 'notes', maxlength: 1000, placeholder: 'Allergies, special requests, etc.' }))
+        ),
+        h('h2', {}, 'Your order'),
+        h('div', { class: 'card', id: 'summary' }),
+        menu.paymentNote ? h('p', { class: 'muted' }, menu.paymentNote) : null,
+        h('p', { class: 'error', id: 'form-error', role: 'alert' }),
+        h('button', { class: 'btn block', type: 'submit', id: 'submit-btn' }, 'Place order')
+      );
+    }
+
+    function update() {
+      for (const [k, s] of Object.entries(steppers)) {
+        const n = qty[k] || 0;
+        s.out.textContent = n;
+        s.minus.disabled = n === 0;
+      }
+      const t = totals();
+      const summary = document.getElementById('summary');
+      if (summary) {
+        fill(summary,
+          t.lines.length
+            ? [
+                t.lines.map(l => h('div', { class: 'summary-line' },
+                  h('span', {}, l.qty + ' × ' + l.item.name + (l.opt.label ? ' (' + l.opt.label + ')' : '')),
+                  h('span', {}, money(Math.round(l.opt.price * 100) * l.qty / 100)))),
+                h('div', { class: 'summary-line summary-total' }, h('span', {}, 'Total'), h('span', {}, money(t.cents / 100)))
+              ]
+            : h('p', { class: 'muted', style: 'margin:0' }, 'Nothing added yet. Use the + buttons above.')
+        );
+      }
+      document.getElementById('bar-total').textContent = money(t.cents / 100);
+      document.getElementById('bar-count').textContent = t.count + (t.count === 1 ? ' item' : ' items');
+      bar.hidden = t.count === 0;
+      if (t.count > 0) setError('');
+    }
+
+    function setError(msg) {
+      const el = document.getElementById('form-error');
+      if (el) el.textContent = msg;
+    }
+
+    async function submit(ev) {
+      ev.preventDefault();
+      if (sending) return;
+      const f = ev.target;
+      const t = totals();
+      if (!t.count) return setError('Please add at least one item to your order.');
+      const customer = {
+        name: f.elements.cname.value.trim(),
+        phone: f.elements.phone.value.trim(),
+        email: f.elements.email.value.trim(),
+        pickup: f.elements.pickup ? f.elements.pickup.value : '',
+        notes: f.elements.notes.value.trim()
+      };
+      if (customer.phone.replace(/\D/g, '').length < 10) {
+        f.elements.phone.focus();
+        return setError('Please enter a phone number with area code.');
+      }
+
+      const btn = document.getElementById('submit-btn');
+      sending = true;
+      btn.disabled = true;
+      btn.textContent = 'Sending order…';
+      setError('');
+      try {
+        const res = await api.post({
+          action: 'order',
+          customer,
+          lines: t.lines.map(l => ({ itemId: l.item.id, optionId: l.opt.id, qty: l.qty }))
+        });
+        renderConfirmation(res, customer);
+      } catch (e) {
+        setError(e.message);
+        btn.disabled = false;
+        btn.textContent = 'Place order';
+      } finally {
+        sending = false;
+      }
+    }
+
+    /* ---------- After submitting ---------- */
+
+    function renderConfirmation(res, customer) {
+      bar.hidden = true;
+      steppers = {};
+      fill(app, h('section', { class: 'card' },
+        h('h2', { style: 'margin-top:0' }, 'Thank you, ' + customer.name + '!'),
+        h('p', {}, 'Your order ', h('strong', {}, '#' + res.orderNo), ' has been received.'),
+        res.pickup ? h('p', {}, 'Pickup: ', h('strong', {}, res.pickup)) : null,
+        res.lines.map(l => h('div', { class: 'summary-line' },
+          h('span', {}, l.qty + ' × ' + l.item + (l.option ? ' (' + l.option + ')' : '')),
+          h('span', {}, money(l.total)))),
+        h('div', { class: 'summary-line summary-total' }, h('span', {}, 'Total'), h('span', {}, money(res.total))),
+        res.paymentNote ? h('p', { class: 'muted' }, res.paymentNote) : null,
+        res.emailedCopy ? h('p', { class: 'muted' }, 'A copy was emailed to ' + customer.email + '.') : null,
+        h('div', { class: 'btn-row noprint' },
+          h('button', { class: 'btn secondary', type: 'button', onclick: () => window.print() }, 'Print or save a copy'),
+          h('button', { class: 'btn', type: 'button', onclick: () => { window.scrollTo(0, 0); load(); } }, 'Start a new order'))
+      ));
+      window.scrollTo(0, 0);
+    }
+
+    load();
+  })();
+  </script>
+</body>
+</html>
