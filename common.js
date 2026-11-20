@@ -144,7 +144,7 @@
 
   window.Crust = {
     api: {
-      getMenu: () => call('GET', { action: 'menu' }),
+      getMenu: (key) => call('GET', key ? { action: 'menu', d: key } : { action: 'menu' }),
       post: (body) => call('POST', body)
     },
     isConfigured,

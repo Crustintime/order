@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Order board | Crust In Time</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    :root { --pickup: #e69138; --pickup-soft: #fce5cd; --delivery: #3d85c6; --delivery-soft: #cfe2f3; --ok: #38761d; --ok-soft: #d9ead3; }
+    body { padding-bottom: 40px; }
+    .top {
+      position: sticky; top: 0; z-index: 20; background: #fff;
+      border-bottom: 1px solid var(--line); box-shadow: 0 2px 8px rgba(0,0,0,.04);
+    }
+    .top-inner { max-width: 720px; margin: 0 auto; padding: 10px 16px 0; }
+    .top-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .top-row h1 { margin: 0; font-size: 1.2rem; flex: 1; }
+    .tabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-top: 10px; }
+    .tab {
+      font: inherit; font-weight: 650; padding: 10px 4px 12px; border: 0; background: none; color: var(--muted);
+      border-bottom: 3px solid transparent; cursor: pointer;
+    }
+    .tab[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
+    .count {
+      display: inline-block; min-width: 22px; padding: 0 6px; margin-left: 4px; border-radius: 999px;
+      background: #eee; color: var(--ink); font-size: .8rem; line-height: 20px;
+    }
+    .tab[aria-selected="true"] .count { background: var(--accent); color: #fff; }
+    .chips { display: flex; gap: 8px; margin: 14px 0 4px; flex-wrap: wrap; }
+    .chip {
+      font: inherit; font-size: .92rem; padding: 6px 12px; border-radius: 999px; cursor: pointer;
+      border: 1px solid var(--line); background: #fff; color: var(--ink);
+    }
+    .chip[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); font-weight: 650; }
+    .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: 0; }
+    .dot.pickup { background: var(--pickup); } .dot.delivery { background: var(--delivery); }
+
+    .group-head { margin: 22px 0 8px; font-size: .95rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
+    .o-card { border-left: 6px solid var(--pickup); }
+    .o-card.delivery { border-left-color: var(--delivery); }
+    .o-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+    .o-name { font-size: 1.1rem; font-weight: 700; }
+    .small { font-size: .9rem; }
+    .tag { font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; padding: 3px 9px; border-radius: 999px; white-space: nowrap; }
+    .tag.pickup { background: var(--pickup-soft); color: #8a4b0f; }
+    .tag.delivery { background: var(--delivery-soft); color: #1c4f7c; }
+    .tag.cash { background: #fff2cc; color: #7f6000; }
+    .tag.paid { background: var(--ok-soft); color: var(--ok); }
+    .meta { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; margin: 8px 0 0; }
+    .meta a { color: var(--accent); }
+    .o-notes { margin: 10px 0 0; padding: 8px 10px; background: #faf8f6; border-radius: 6px; white-space: pre-line; font-size: .95rem; }
+    .o-items { margin: 10px 0 0; padding: 0; list-style: none; }
+    .o-items li { padding: 3px 0; }
+    .o-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 14px; }
+    .o-actions .btn.big { flex: 1; min-width: 180px; padding: 14px 18px; font-size: 1.05rem; }
+    .linkish { font: inherit; font-size: .92rem; background: none; border: 0; color: var(--muted); text-decoration: underline; cursor: pointer; padding: 6px 2px; }
+    .linkish.danger { color: var(--danger); }
+
+    .check-line {
+      display: flex; align-items: center; gap: 12px; padding: 12px 4px; border-top: 1px solid var(--line);
+      cursor: pointer; font-size: 1.05rem;
+    }
+    .check-line:first-child { border-top: 0; }
+    .check-line input { width: 28px; height: 28px; flex: none; accent-color: var(--ok); }
+    .check-line.done span { text-decoration: line-through; color: var(--muted); }
+    .progress { height: 6px; background: #eee; border-radius: 999px; overflow: hidden; margin: 10px 0 2px; }
+    .progress > div { height: 100%; background: var(--ok); transition: width .2s; }
+    .o-lines { margin-top: 8px; }
+
+    .totals h2 { margin: 0 0 8px; font-size: 1.05rem; }
+    .total-line { display: flex; gap: 10px; padding: 5px 0; font-size: 1.02rem; border-top: 1px solid var(--line); }
+    .total-line:first-of-type { border-top: 0; }
+    .total-qty { flex: none; min-width: 36px; text-align: right; }
+
+    .empty { text-align: center; color: var(--muted); padding: 30px 10px; }
+
+    .modal-back {
+      position: fixed; inset: 0; z-index: 50; background: rgba(43, 36, 32, .45);
+      display: grid; place-items: center; padding: 20px;
+    }
+    .modal {
+      width: 100%; max-width: 420px; background: #fff; border-radius: 14px; padding: 22px 20px 18px;
+      box-shadow: 0 10px 40px rgba(0,0,0,.25);
+    }
+    .modal h2 { margin: 0 0 8px; font-size: 1.25rem; }
+    .modal p { margin: 0 0 6px; }
+    .modal .btn-row .btn { flex: 1; padding: 14px; font-size: 1.05rem; }
+    .toast {
+      position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 60;
+      max-width: 92vw; padding: 12px 18px; border-radius: 8px;
+      background: #2b2420; color: #fff; box-shadow: 0 4px 16px rgba(0,0,0,.2);
+    }
+    .toast.bad { background: var(--danger); }
+  </style>
+</head>
+<body>
+  <div id="top-slot"></div>
+  <main class="wrap" id="board"><p class="muted center" style="margin-top:40px">Loading…</p></main>
+
+  <script src="config.js"></script>
+  <script src="common.js"></script>
+  <script>
+  (function () {
+    const { api, h, fill, money } = Crust;
+    const board = document.getElementById('board');
+    const topSlot = document.getElementById('top-slot');
+    const PW_KEY = 'crust_admin_pw';   // shared with the menu editor, so one login covers both
+
+    const S = { pw: null, orders: [], tab: 'pending', filter: 'all', busy: {}, sheetUrl: '', loadedAt: 0 };
+    const TABS = [['pending', 'Pending'], ['bake', 'To bake'], ['baked', 'Baked']];
+    const queues = {};   // per-order request chains, so quick taps save in order
+
+    function readPw() { try { return sessionStorage.getItem(PW_KEY); } catch (e) { return null; } }
+    function writePw(v) { try { v ? sessionStorage.setItem(PW_KEY, v) : sessionStorage.removeItem(PW_KEY); } catch (e) {} }
+
+    async function call(body) {
+      try {
+        return await api.post(Object.assign({}, body, { password: S.pw }));
+      } catch (e) {
+        if (e.code === 'bad_password' || e.code === 'no_password') { S.pw = null; writePw(null); showLogin(e.message); }
+        throw e;
+      }
+    }
+
+    let toastTimer;
+    function toast(msg, bad) {
+      document.querySelectorAll('.toast').forEach(t => t.remove());
+      const t = h('div', { class: 'toast' + (bad ? ' bad' : ''), role: 'status' }, msg);
+      document.body.append(t);
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => t.remove(), bad ? 6000 : 3000);
+    }
+
+    // Pop-up confirmation. Resolves true for the main button, false otherwise.
+    function confirmBox(opts) {
+      return new Promise((resolve) => {
+        const close = (v) => { back.remove(); document.removeEventListener('keydown', onKey); resolve(v); };
+        const onKey = (e) => { if (e.key === 'Escape') close(false); };
+        const yes = h('button', { class: 'btn' + (opts.danger ? ' danger' : ''), type: 'button', onclick: () => close(true) }, opts.yes);
+        const back = h('div', { class: 'modal-back', onclick: (e) => { if (e.target === back) close(false); } },
+          h('div', { class: 'modal', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'modal-title' },
+            h('h2', { id: 'modal-title' }, opts.title),
+            opts.lines.map(l => h('p', {}, l)),
+            h('div', { class: 'btn-row' },
+              h('button', { class: 'btn secondary', type: 'button', onclick: () => close(false) }, opts.no || 'Not yet'),
+              yes)));
+        document.body.append(back);
+        document.addEventListener('keydown', onKey);
+        yes.focus();
+      });
+    }
+
+    /* ---------- Login (same password as the menu editor) ---------- */
+
+    function showLogin(message) {
+      fill(topSlot);
+      const input = h('input', { type: 'password', name: 'pw', autocomplete: 'current-password', required: true });
+      const err = h('p', { class: 'error' }, message || '');
+      const btn = h('button', { class: 'btn block', type: 'submit' }, 'Open order board');
+      fill(board,
+        h('header', { class: 'site' }, h('h1', {}, 'Crust In Time'), h('p', { class: 'sub' }, 'Order board')),
+        h('form', { class: 'card', onsubmit: async (ev) => {
+          ev.preventDefault();
+          btn.disabled = true; btn.textContent = 'Checking…'; err.textContent = '';
+          S.pw = input.value;
+          try { await load(); writePw(S.pw); }
+          catch (e) { err.textContent = e.message; btn.disabled = false; btn.textContent = 'Open order board'; }
+        } },
+          h('label', { class: 'field' }, 'Admin password', input), err, btn));
+      input.focus();
+    }
+
+    /* ---------- Data ---------- */
+
+    async function load(quiet) {
+      const d = await call({ action: 'boardLoad' });
+      S.orders = d.orders || [];
+      S.sheetUrl = d.sheetUrl || '';
+      S.loadedAt = Date.now();
+      render();
+      if (!quiet && S.orders.length === 0) { /* empty state shows in render */ }
+    }
+
+    async function refresh() {
+      const btn = document.getElementById('refresh-btn');
+      if (btn) { btn.disabled = true; btn.textContent = 'Refreshing…'; }
+      try { await load(true); toast('Up to date.'); }
+      catch (e) { if (S.pw) toast(e.message, true); }
+      finally { const b = document.getElementById('refresh-btn'); if (b) { b.disabled = false; b.textContent = 'Refresh'; } }
+    }
+
+    const byDate = (a, b) => (a.date || '9999').localeCompare(b.date || '9999') || a.orderNo - b.orderNo;
+    const inTab = (stage) => S.orders.filter(o => o.stage === stage && (S.filter === 'all' || o.type === S.filter)).sort(byDate);
+    const typeWord = (o) => o.type === 'delivery' ? 'Delivery' : 'Pickup';
+    const lineText = (l) => l.item + (l.option ? ' (' + l.option + ')' : '');
+
+    function replaceOrder(updated) {
+      const i = S.orders.findIndex(o => o.orderNo === updated.orderNo);
+      if (updated.stage === 'closed' || updated.stage === 'cancelled') { if (i >= 0) S.orders.splice(i, 1); }
+      else if (i >= 0) S.orders[i] = updated;
+      else S.orders.push(updated);
+    }
+
+    // Runs one change for an order, after any earlier change to the same order has saved.
+    function update(o, op, extra) {
+      const job = (queues[o.orderNo] || Promise.resolve()).then(() =>
+        call(Object.assign({ action: 'boardUpdate', orderNo: o.orderNo, op }, extra || {})));
+      queues[o.orderNo] = job.catch(() => {});
+      return job.then(r => r.order);
+    }
+
+    async function act(o, op, doneMsg) {
+      S.busy[o.orderNo] = true; render();
+      try {
+        const updated = await update(o, op);
+        replaceOrder(updated);
+        if (doneMsg) toast(doneMsg);
+      } catch (e) {
+        toast(e.message, true);
+      } finally {
+        delete S.busy[o.orderNo]; render();
+      }
+    }
+
+    let pendingChecks = {};
+    async function toggleItem(o, i, on) {
+      const set = new Set(o.checked);
+      on ? set.add(i) : set.delete(i);
+      o.checked = Array.from(set).sort((a, b) => a - b);
+      render();
+      const mine = (pendingChecks[o.orderNo] || 0) + 1;
+      pendingChecks[o.orderNo] = mine;
+      try {
+        const updated = await update(o, 'check', { checked: o.checked });
+        if (pendingChecks[o.orderNo] !== mine) return;     // a newer tap is on its way
+        replaceOrder(updated);
+        if (updated.stage === 'baked') {
+          const n = updated.notice || {};
+          const who = updated.name || 'the customer';
+          if (n.sent) toast('Order #' + o.orderNo + ' is all baked. "Ready" email sent to ' + who + '.');
+          else if (n.reason === 'no_email') toast('Order #' + o.orderNo + ' is all baked. No email on file, so let ' + who + ' know' + (updated.phone ? ': ' + updated.phone : '') + '.', true);
+          else if (n.reason === 'failed') toast('Order #' + o.orderNo + ' is baked, but the "ready" email didn\'t send. Let ' + who + ' know directly.', true);
+          else toast('Order #' + o.orderNo + ' is all baked. Moved to Baked.');
+        }
+        render();
+      } catch (e) {
+        toast(e.message + ' Refreshing…', true);
+        load(true).catch(() => {});
+      }
+    }
+
+    /* ---------- Screens ---------- */
+
+    function render() {
+      const counts = {};
+      TABS.forEach(([k]) => { counts[k] = inTab(k).length; });
+
+      fill(topSlot, h('div', { class: 'top' }, h('div', { class: 'top-inner' },
+        h('div', { class: 'top-row' },
+          h('h1', {}, 'Order board'),
+          h('button', { class: 'btn small secondary', id: 'refresh-btn', type: 'button', onclick: refresh }, 'Refresh'),
+          h('a', { class: 'btn small secondary', href: 'admin.html' }, 'Editor'),
+          S.sheetUrl ? h('a', { class: 'btn small secondary', href: S.sheetUrl, target: '_blank', rel: 'noopener' }, 'Sheet') : null),
+        h('div', { class: 'tabs', role: 'tablist' }, TABS.map(([k, label]) =>
+          h('button', { class: 'tab', role: 'tab', type: 'button', 'aria-selected': String(S.tab === k),
+            onclick: () => { S.tab = k; render(); window.scrollTo(0, 0); } },
+            label, h('span', { class: 'count' }, counts[k]))))
+      )));
+
+      const chip = (k, label, dot) => h('button', { class: 'chip', type: 'button', 'aria-pressed': String(S.filter === k),
+        onclick: () => { S.filter = k; render(); } }, dot ? h('span', { class: 'dot ' + dot }) : null, label);
+
+      const list = inTab(S.tab);
+      fill(board,
+        h('div', { class: 'chips' }, chip('all', 'All'), chip('pickup', 'Pickup', 'pickup'), chip('delivery', 'Delivery', 'delivery')),
+        S.tab === 'bake' && list.length ? totalsCard(list) : null,
+        list.length ? grouped(list) : h('p', { class: 'empty' }, emptyText())
+      );
+    }
+
+    function emptyText() {
+      if (S.tab === 'pending') return 'No orders waiting for payment.';
+      if (S.tab === 'bake') return 'Nothing to bake right now. Mark orders as paid on the Pending tab.';
+      return 'No baked orders waiting to go out.';
+    }
+
+    function grouped(list) {
+      const out = [];
+      let last = null;
+      list.forEach(o => {
+        const key = o.type + '|' + o.when;
+        if (key !== last) {
+          out.push(h('h2', { class: 'group-head' }, h('span', { class: 'dot ' + o.type }), typeWord(o) + (o.when ? ' · ' + o.when : '')));
+          last = key;
+        }
+        out.push(card(o));
+      });
+      return out;
+    }
+
+    function totalsCard(list) {
+      const remaining = {};
+      list.forEach(o => o.lines.forEach((l, i) => {
+        if (o.checked.includes(i)) return;
+        const k = lineText(l);
+        remaining[k] = (remaining[k] || 0) + l.qty;
+      }));
+      const keys = Object.keys(remaining).sort();
+      return h('section', { class: 'card totals' },
+        h('h2', {}, 'Still to bake' + (S.filter !== 'all' ? ' (' + S.filter + ')' : '')),
+        keys.length
+          ? keys.map(k => h('div', { class: 'total-line' }, h('strong', { class: 'total-qty' }, remaining[k] + ' ×'), h('span', {}, k)))
+          : h('p', { class: 'muted', style: 'margin:0' }, 'All items checked off.'));
+    }
+
+    function head(o) {
+      return [
+        h('div', { class: 'o-head' },
+          h('div', {}, h('div', { class: 'o-name' }, o.name), h('div', { class: 'muted small' }, '#' + o.orderNo + ' · ' + money(o.total))),
+          h('span', { class: 'tag ' + o.type }, typeWord(o))),
+        h('div', { class: 'meta small' },
+          o.phone ? h('a', { href: 'tel:' + o.phone.replace(/[^\d+]/g, '') }, o.phone) : null,
+          o.cash ? h('span', { class: 'tag cash' }, 'Cash on delivery') : null,
+          o.stage !== 'pending' ? h('span', { class: 'tag paid' }, o.cash ? 'Approved' : 'Paid') : null,
+          o.stage === 'baked' && o.readyEmailSent ? h('span', { class: 'tag paid' }, 'Ready email sent') : null),
+        o.notes ? h('p', { class: 'o-notes' }, o.notes) : null
+      ];
+    }
+
+    function card(o) {
+      const busy = !!S.busy[o.orderNo];
+      const el = h('article', { class: 'card o-card ' + o.type, id: 'order-' + o.orderNo }, head(o));
+
+      if (o.stage === 'pending') {
+        el.append(
+          h('ul', { class: 'o-items' }, o.lines.map(l => h('li', {}, l.qty + ' × ' + lineText(l)))),
+          h('div', { class: 'o-actions' },
+            h('button', { class: 'btn big', type: 'button', disabled: busy,
+              onclick: () => act(o, 'paid', 'Order #' + o.orderNo + ' moved to To bake.') },
+              busy ? 'Saving…' : (o.cash ? 'Approve (cash on delivery)' : 'Mark paid / secured')),
+            h('button', { class: 'linkish danger', type: 'button', disabled: busy, onclick: async () => {
+              const ok = await confirmBox({ title: 'Cancel order #' + o.orderNo + '?',
+                lines: [o.name + ', ' + money(o.total) + '.', 'It will be marked Cancelled in the sheet and removed from this board.'],
+                yes: 'Cancel order', no: 'Keep it', danger: true });
+              if (ok) act(o, 'cancel', 'Order #' + o.orderNo + ' cancelled.');
+            } }, 'Cancel order')));
+      }
+
+      if (o.stage === 'bake') {
+        const done = o.checked.length, total = o.lines.length;
+        el.append(
+          h('div', { class: 'progress', 'aria-hidden': 'true' }, h('div', { style: 'width:' + (total ? Math.round(done / total * 100) : 0) + '%' })),
+          h('div', { class: 'muted small' }, done + ' of ' + total + ' done'),
+          h('div', { class: 'o-lines' }, o.lines.map((l, i) => {
+            const on = o.checked.includes(i);
+            const cb = h('input', { type: 'checkbox', checked: on, 'aria-label': 'Baked: ' + l.qty + ' ' + lineText(l) });
+            cb.addEventListener('change', () => toggleItem(o, i, cb.checked));
+            return h('label', { class: 'check-line' + (on ? ' done' : '') }, cb,
+              h('span', {}, h('strong', {}, l.qty + ' × '), lineText(l)));
+          })),
+          h('div', { class: 'o-actions' },
+            h('button', { class: 'linkish', type: 'button', disabled: busy,
+              onclick: () => act(o, 'unpaid', 'Order #' + o.orderNo + ' moved back to Pending.') }, 'Move back to Pending')));
+      }
+
+      if (o.stage === 'baked') {
+        const verb = o.type === 'delivery' ? 'delivered' : 'picked up';
+        el.append(
+          h('ul', { class: 'o-items' }, o.lines.map(l => h('li', {}, '✓ ' + l.qty + ' × ' + lineText(l)))),
+          h('div', { class: 'o-actions' },
+            h('button', { class: 'btn big', type: 'button', disabled: busy, onclick: async () => {
+              const ok = await confirmBox({
+                title: o.type === 'delivery' ? 'Delivered?' : 'Picked up?',
+                lines: [
+                  'Confirm order #' + o.orderNo + ' for ' + o.name + ' was ' + verb + '.',
+                  o.cash ? 'Cash on delivery: collect ' + money(o.total) + '.' : null,
+                  'The order will be marked Closed and removed from this board.'
+                ].filter(Boolean),
+                yes: 'Yes, ' + verb });
+              if (ok) act(o, 'close', 'Order #' + o.orderNo + ' closed.');
+            } }, busy ? 'Saving…' : (o.type === 'delivery' ? 'Mark delivered' : 'Mark picked up')),
+            h('button', { class: 'linkish', type: 'button', disabled: busy,
+              onclick: () => act(o, 'reopen', 'Order #' + o.orderNo + ' moved back to To bake.') }, 'Move back to To bake')));
+      }
+      return el;
+    }
+
+    // Catch up when she comes back to the page, and every few minutes while open.
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && S.pw && Date.now() - S.loadedAt > 30000) load(true).catch(() => {});
+    });
+    setInterval(() => {
+      if (document.visibilityState === 'visible' && S.pw && !Object.keys(S.busy).length) load(true).catch(() => {});
+    }, 180000);
+
+    (async function init() {
+      if (!Crust.isConfigured()) {
+        fill(board, h('div', { class: 'card error' }, "This page isn't connected yet. Paste the Apps Script Web App URL into config.js."));
+        return;
+      }
+      S.pw = readPw();
+      if (!S.pw) return showLogin();
+      try { await load(); }
+      catch (e) { if (S.pw) showLogin(e.message); }
+    })();
+  })();
+  </script>
+</body>
+</html>

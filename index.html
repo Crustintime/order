@@ -37,13 +37,16 @@
     let steppers = {};     // "itemId|optionId" -> { out, minus, plus }
     let sending = false;
 
+    // The work delivery link carries ?d=<key>; the plain link is the pickup form.
+    const linkKey = new URLSearchParams(location.search).get('d') || '';
+
     const keyOf = (item, opt) => item.id + '|' + opt.id;
 
     async function load() {
       bar.hidden = true;
       fill(app, h('p', { class: 'muted center' }, 'Loading menu…'));
       try {
-        const data = await api.getMenu();
+        const data = await api.getMenu(linkKey);
         menu = data.menu;
         qty = {};
         renderHeader();
@@ -56,7 +59,7 @@
     }
 
     function renderHeader() {
-      document.getElementById('menu-title').textContent = menu.title;
+      document.getElementById('menu-title').textContent = menu.title + (menu.formName ? ' · ' + menu.formName : '');
       document.title = menu.title + ' | Crust In Time';
       const slot = document.getElementById('logo-slot');
       const name = document.getElementById('site-name');
@@ -102,7 +105,7 @@
 
       if (!menu.ordersOpen || noPickup) {
         fill(app, h('div', { class: 'card notice center' },
-          menu.ordersOpen ? 'There are no pickup dates open right now. Check back soon!' : menu.closedMessage));
+          menu.ordersOpen ? 'There are no ' + menu.word.toLowerCase() + ' dates open right now. Check back soon!' : menu.closedMessage));
         return;
       }
 
@@ -152,9 +155,9 @@
     function pickupField() {
       if (menu.pickupMode === 'weekly') {
         return h('div', { class: 'field pickup-box', id: 'pickup-box' },
-          h('div', {}, 'Pickup'),
+          h('div', {}, menu.word),
           h('div', { class: 'pickup-date' }, menu.pickup.label),
-          h('div', { class: 'hint' }, 'Orders for this pickup close at 11:59 pm on ' + menu.pickup.cutoffLabel + '.'));
+          h('div', { class: 'hint' }, 'Orders for this ' + menu.word.toLowerCase() + ' close at 11:59 pm on ' + menu.pickup.cutoffLabel + '.'));
       }
       const pickups = menu.pickupOptions || [];
       if (!pickups.length) return null;
@@ -164,14 +167,28 @@
           pickups.map(p => h('option', { value: p }, p))));
     }
 
+    function payChoice() {
+      if (!menu.allowCash) return null;
+      const due = menu.pickupMode === 'weekly' && menu.pickup ? 'pay by 11:59 pm ' + menu.pickup.cutoffLabel : 'pay after ordering';
+      const opt = (value, title, hint) => h('label', { class: 'pay-choice' },
+        h('input', { type: 'radio', name: 'payment', value, required: true }),
+        h('span', {}, h('strong', {}, title), h('span', { class: 'hint' }, hint)));
+      return h('fieldset', { class: 'pay-choices' },
+        h('legend', {}, 'How will you pay?'),
+        opt('app', 'Venmo or Cash App', due),
+        opt('cash', 'Cash on delivery', 'pay the exact amount when your order arrives'),
+        menu.cashNote ? h('p', { class: 'cash-note' }, menu.cashNote) : null);
+    }
+
     function paymentInfo() {
       const links = payLinks(menu.payments);
       return h('div', {},
         h('h2', {}, 'Payment'),
         h('div', { class: 'card' },
           menu.disclaimer ? h('p', { class: 'disclaimer' }, menu.disclaimer) : null,
+          payChoice(),
           links.length ? [
-            menu.pickupMode === 'weekly' && menu.pickup
+            menu.pickupMode === 'weekly' && menu.pickup && !menu.allowCash
               ? h('p', { style: 'margin:12px 0 0' }, 'Payment is due by ', h('strong', {}, '11:59 pm ' + menu.pickup.cutoffLabel), '.')
               : null,
             h('p', { class: 'muted', style: 'margin:12px 0' },
@@ -248,8 +265,10 @@
         email: f.elements.email.value.trim(),
         pickup: f.elements.pickup ? f.elements.pickup.value : '',
         pickupDate: menu.pickupMode === 'weekly' && menu.pickup ? menu.pickup.date : '',
+        payment: f.elements.payment ? f.elements.payment.value : 'app',
         notes: f.elements.notes.value.trim()
       };
+      if (menu.allowCash && !customer.payment) return setError('Please choose how you will pay.');
       if (customer.phone.replace(/\D/g, '').length < 10) {
         f.elements.phone.focus();
         return setError('Please enter a phone number with area code.');
@@ -263,6 +282,8 @@
       try {
         const res = await api.post({
           action: 'order',
+          channel: menu.channel,
+          key: linkKey,
           customer,
           lines: t.lines.map(l => ({ itemId: l.item.id, optionId: l.opt.id, qty: l.qty }))
         });
@@ -280,7 +301,7 @@
     // The Wednesday deadline passed while the page was open: show the new date.
     async function refreshPickup() {
       try {
-        const data = await api.getMenu();
+        const data = await api.getMenu(linkKey);
         menu.pickup = data.menu.pickup;
         const box = document.getElementById('pickup-box');
         if (box && menu.pickup) box.replaceWith(pickupField());
@@ -291,7 +312,8 @@
 
     function summaryText(res, customer) {
       return ['Crust In Time order #' + res.orderNo, 'Name: ' + customer.name,
-        res.pickup ? 'Pickup: ' + res.pickup : '',
+        res.pickup ? menu.word + ': ' + res.pickup : '',
+        res.cash ? 'Payment: cash on delivery. ' + (menu.cashNote || '') : '',
         ...res.lines.map(l => l.qty + ' x ' + l.item + (l.option ? ' (' + l.option + ')' : '') + ' = ' + money(l.total)),
         'Total: ' + money(res.total), menu.disclaimer || ''].filter(Boolean).join('\n');
     }
@@ -313,7 +335,7 @@
       fill(app, h('section', { class: 'card' },
         h('h2', { style: 'margin-top:0' }, 'Thank you, ' + customer.name + '!'),
         h('p', {}, 'Your order ', h('strong', {}, '#' + res.orderNo), ' has been received.'),
-        res.pickup ? h('p', {}, 'Pickup: ', h('strong', {}, res.pickup)) : null,
+        res.pickup ? h('p', {}, menu.word + ': ', h('strong', {}, res.pickup)) : null,
         res.lines.map(l => h('div', { class: 'summary-line' },
           h('span', {}, l.qty + ' × ' + l.item + (l.option ? ' (' + l.option + ')' : '')),
           h('span', {}, money(l.total)))),
@@ -321,7 +343,14 @@
 
         menu.disclaimer ? h('p', { class: 'disclaimer', style: 'margin-top:18px' }, menu.disclaimer) : null,
 
-        links.length ? h('div', { class: 'pay-now' },
+        res.cash ? h('div', { class: 'pay-now' },
+          h('h3', {}, 'Cash on delivery'),
+          h('p', {}, 'Please have ', h('strong', {}, money(res.total)), ' ready when your order is delivered' +
+            (res.pickup ? ' on ' + res.pickup : '') + '.'),
+          menu.cashNote ? h('p', { class: 'disclaimer' }, menu.cashNote) : null
+        ) : null,
+
+        !res.cash && links.length ? h('div', { class: 'pay-now' },
           h('h3', {}, 'Pay ' + money(res.total) + (res.payBy ? ' by 11:59 pm ' + res.payBy : ' now')),
           h('p', { class: 'muted' }, 'Please put ', h('strong', {}, 'order #' + res.orderNo), ' in your payment note.'),
           h('div', { class: 'pay-grid' }, links.map(l => h('div', { class: 'pay-card' },

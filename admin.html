@@ -125,6 +125,7 @@
       const d = await api.post({ action: 'adminLoad', password: pw });
       S.pw = pw; writePw(pw);
       S.menu = d.menu; S.saved = d.saved || []; S.defaultEmail = d.defaultEmail || ''; S.sheetUrl = d.sheetUrl || '';
+      S.deliveryKey = d.deliveryKey || '';
       S.dirty = false;
       renderEditor();
     }
@@ -146,6 +147,7 @@
       const m = S.menu;
       fill(toolbarSlot, h('div', { class: 'toolbar' }, h('div', { class: 'toolbar-inner' },
         h('span', { id: 'status', class: 'status' }),
+        h('a', { class: 'btn small secondary', href: 'kitchen.html' }, 'Order board'),
         h('a', { class: 'btn small secondary', href: 'index.html', target: '_blank', rel: 'noopener' }, 'Order page'),
         S.sheetUrl ? h('a', { class: 'btn small secondary', href: S.sheetUrl, target: '_blank', rel: 'noopener' }, 'Orders sheet') : null,
         h('button', { class: 'btn small', id: 'publish-btn', type: 'button', onclick: publish }, 'Publish'),
@@ -157,8 +159,10 @@
         settingsCard(m),
         h('h2', {}, 'Logo and instructions'),
         brandingCard(m),
-        h('h2', {}, 'Pickup'),
+        h('h2', {}, 'Pickup (public order link)'),
         pickupCard(m),
+        h('h2', {}, 'Work delivery (private order link)'),
+        deliveryCard(m),
         h('h2', {}, 'Payment'),
         paymentCard(m),
         h('h2', {}, 'Menu items'),
@@ -212,11 +216,12 @@
       return h('section', { class: 'card' },
         field('Menu title', textIn(m, 'title', { maxlength: 100 }), '(shown at the top of the order page)'),
         field('Intro message', textIn(m, 'intro', { multiline: true, maxlength: 1000 }), '(optional)'),
-        checkIn(m, 'ordersOpen', 'Taking orders (uncheck to close the order form)'),
+        checkIn(m, 'ordersOpen', 'Taking pickup orders (uncheck to close the pickup form)'),
         field('Message shown when orders are closed', textIn(m, 'closedMessage', { maxlength: 300 })),
         field('Send new orders to', textIn(m, 'notifyEmail', { type: 'email', placeholder: S.defaultEmail, maxlength: 200 }),
           S.defaultEmail ? '(leave blank to use ' + S.defaultEmail + ')' : ''),
-        checkIn(m, 'sendCustomerCopy', 'Email customers a copy of their order (when they give an email)')
+        checkIn(m, 'sendCustomerCopy', 'Email customers a copy of their order (when they give an email)'),
+        checkIn(m, 'readyEmails', 'Email customers when their order is ready (sent from the order board when the last item is checked off)')
       );
     }
 
@@ -226,7 +231,7 @@
       return h('section', { class: 'card' },
         h('div', { class: 'group-label' }, 'Logo ', h('span', { class: 'hint' }, '(shown at the top of the order page and in customer emails)')),
         imageField(m, 'logo', 'logo', 'logo'),
-        h('div', { class: 'group-label' }, '"How to order" steps ', h('span', { class: 'hint' }, '(keep each to 3 or 4 words)')),
+        h('div', { class: 'group-label' }, '"How to order" steps for the pickup form ', h('span', { class: 'hint' }, '(keep each to 3 or 4 words)')),
         steps
       );
     }
@@ -272,14 +277,81 @@
         list.id = 'pickup-list';
         card.append(h('div', { class: 'group-label' }, 'Pickup options customers choose from'), list);
       }
+      card.append(h('div', { style: 'height:14px' }),
+        field('Pickup address', textIn(m, 'pickupAddress', { maxlength: 200, placeholder: 'Street, city, state, ZIP' }),
+          '(included in the "your order is ready" email)'));
+      return card;
+    }
+
+    function deliveryCard(m) {
+      const d = m.delivery, w = d.weekly;
+      const preview = h('p', { class: 'preview-line' });
+      const refresh = () => {
+        const p = Crust.nextPickup(w);
+        preview.textContent = p
+          ? 'Right now coworkers see: delivery ' + p.label + ', orders close 11:59 pm ' + p.cutoffLabel + '.'
+          : 'No upcoming delivery date. Check the weeks off list.';
+      };
+      const daySelect = (prop) => {
+        const sel = h('select', {}, Crust.DAYS.map((name, i) => h('option', { value: String(i) }, name)));
+        sel.value = String(w[prop]);
+        sel.addEventListener('change', () => { w[prop] = Number(sel.value); markDirty(); refresh(); });
+        return sel;
+      };
+      const linkUrl = () => new URL('index.html?d=' + encodeURIComponent(S.deliveryKey), location.href).href;
+      const linkInput = h('input', { type: 'text', readonly: true, value: linkUrl(), 'aria-label': 'Work order link' });
+      const openLink = h('a', { class: 'btn small secondary', href: linkUrl(), target: '_blank', rel: 'noopener' }, 'Open');
+      const copy = () => {
+        const done = () => toast('Link copied. Paste it in a text or email to coworkers.');
+        if (navigator.clipboard) navigator.clipboard.writeText(linkInput.value).then(done, () => { linkInput.select(); toast('Select the link and copy it.'); });
+        else { linkInput.select(); document.execCommand('copy'); done(); }
+      };
+      const makeNew = async () => {
+        if (!confirm('Make a new work link? The current link will stop working right away, so you\'ll need to share the new one.')) return;
+        try {
+          const r = await adminCall({ action: 'adminNewDeliveryLink' });
+          S.deliveryKey = r.deliveryKey;
+          linkInput.value = linkUrl(); openLink.href = linkUrl();
+          toast('New link ready. The old one no longer works.');
+        } catch (e) { toast(e.message, true); }
+      };
+      const skips = listEditor(w.skipDates, { type: 'date', aria: 'Week off', addLabel: '+ Add a week off', onChange: refresh });
+      skips.id = 'delivery-skip-list';
+      const steps = listEditor(d.steps, { placeholder: 'e.g. Choose how to pay', maxlength: 60, aria: 'Step', addLabel: '+ Add step' });
+      steps.id = 'delivery-steps-list';
+      const card = h('section', { class: 'card' },
+        checkIn(d, 'enabled', 'Taking delivery orders (uncheck to close the work form)'),
+        h('div', { class: 'group-label' }, 'Order link ', h('span', { class: 'hint' }, '(share only with coworkers; same menu as the pickup form)')),
+        linkInput,
+        h('div', { class: 'btn-row', style: 'margin:8px 0 16px' },
+          h('button', { class: 'btn small', type: 'button', onclick: copy }, 'Copy link'),
+          openLink,
+          h('button', { class: 'btn small danger', type: 'button', onclick: makeNew }, 'Make a new link')),
+        h('div', { class: 'row' },
+          h('div', { class: 'grow' }, field('Delivery day', daySelect('pickupDay'))),
+          h('div', { class: 'grow' }, field('Last day to order', daySelect('cutoffDay')))),
+        field('Delivery time', textIn(w, 'time', { placeholder: 'e.g. morning', maxlength: 60, onInput: refresh }), '(optional)'),
+        h('div', { class: 'group-label' }, 'Weeks off ', h('span', { class: 'hint' }, '(delivery dates with no baking; orders roll to the next week)')),
+        skips,
+        preview,
+        h('div', { style: 'height:14px' }),
+        checkIn(d, 'allowCash', 'Offer cash on delivery (in addition to Venmo and Cash App)'),
+        field('Cash on delivery note', textIn(d, 'cashNote', { multiline: true, maxlength: 300 }),
+          '(shown when someone picks cash, and repeated in their emails)'),
+        field('Delivery disclaimer', textIn(d, 'disclaimer', { multiline: true, maxlength: 400 }),
+          '(shown at checkout, after ordering, and in the customer email)'),
+        h('div', { class: 'group-label' }, '"How to order" steps for the work form ', h('span', { class: 'hint' }, '(keep each to 3 or 4 words)')),
+        steps
+      );
+      refresh();
       return card;
     }
 
     function paymentCard(m) {
       const p = m.payments;
       return h('section', { class: 'card' },
-        field('Order disclaimer', textIn(m, 'disclaimer', { multiline: true, maxlength: 400 }),
-          '(shown at checkout, after ordering, and in the customer email)'),
+        field('Pickup disclaimer', textIn(m, 'disclaimer', { multiline: true, maxlength: 400 }),
+          '(shown at checkout, after ordering, and in the customer email; the work form has its own below)'),
         h('div', { class: 'sub-card' }, h('h3', {}, 'Venmo'),
           field('Venmo username', textIn(p.venmo, 'handle', { placeholder: 'e.g. Sarah-Ayers-42', maxlength: 40 }), '(without the @; leave blank to hide Venmo)'),
           h('div', { class: 'group-label' }, 'QR code'),
@@ -435,6 +507,9 @@
       const m = S.menu, out = [];
       if (m.ordersOpen && m.pickupMode === 'weekly' && !Crust.nextPickup(m.weekly)) {
         out.push('There is no upcoming pickup date, so customers will see "no pickup dates open".');
+      }
+      if (m.delivery.enabled && !Crust.nextPickup(m.delivery.weekly)) {
+        out.push('There is no upcoming work delivery date, so coworkers will see "no delivery dates open".');
       }
       if (m.ordersOpen && m.pickupMode === 'list' && !m.pickupOptions.some(p => String(p).trim())) {
         out.push('There are no pickup options, so customers won\'t be asked when they\'re picking up.');
