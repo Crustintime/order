@@ -38,6 +38,12 @@
     }
     .toast.bad { background: var(--danger); }
     .x { width: 38px; height: 38px; padding: 0; flex: none; }
+    .avail { width: 100%; border-collapse: collapse; margin: 2px 0 4px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+    .avail th, .avail td { padding: 8px 6px; border-top: 1px solid var(--line); text-align: center; font-size: .92rem; }
+    .avail thead th { border-top: 0; background: #faf8f6; font-weight: 650; }
+    .avail tbody th { text-align: left; font-weight: 600; padding-left: 10px; }
+    .avail input { width: 24px; height: 24px; margin: 0; }
+    .avail-note { margin: 6px 0 0; color: var(--danger); font-weight: 600; font-size: .92rem; }
     .group-label { font-weight: 600; margin-bottom: 6px; }
     .img-field { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 4px 0 14px; }
     .img-preview {
@@ -441,14 +447,13 @@
 
     function itemEditor(item, idx) {
       const items = S.menu.items;
-      const card = h('section', { class: 'card item edit' + (item.soldOut ? ' is-soldout' : ''), id: 'item-' + item.id });
+      const card = h('section', { class: 'card item edit', id: 'item-' + item.id });
       fill(card,
         h('div', { class: 'group-label' }, 'Photo ', h('span', { class: 'hint' }, '(optional)')),
         imageField(item, 'image', 'photo', item.name || 'item'),
         field('Item name', textIn(item, 'name', { class: 'name-input', maxlength: 100 })),
-        h('div', { class: 'row' },
-          h('div', { class: 'grow' }, field('Badge', textIn(item, 'badge', { placeholder: 'e.g. Last Chance, New', maxlength: 30 }), '(optional)')),
-          checkIn(item, 'soldOut', 'Sold out', (on) => card.classList.toggle('is-soldout', on))),
+        field('Badge', textIn(item, 'badge', { placeholder: 'e.g. Last Chance, New', maxlength: 30 }), '(optional)'),
+        availability(item, card),
         field('Description', textIn(item, 'description', { multiline: true, maxlength: 1000 })),
         h('div', { class: 'opts-head' }, 'Sizes and prices ', h('span', { class: 'hint' }, '(each line is something customers can add)')),
         item.options.map((opt, oi) => h('div', { class: 'opt-edit' },
@@ -473,6 +478,41 @@
       return card;
     }
 
+    // Which menus show this item, and where it's sold out.
+    function availability(item, card) {
+      const m = S.menu;
+      const pickupName = m.pickupMode === 'weekly' ? Crust.DAYS[m.weekly.pickupDay] + ' pickup' : 'Pickup';
+      const deliveryName = Crust.DAYS[m.delivery.weekly.pickupDay] + ' delivery';
+      const note = h('p', { class: 'avail-note' });
+      const paint = () => {
+        const live = (item.onPickup && !item.soldOutPickup) || (item.onDelivery && !item.soldOutDelivery);
+        card.classList.toggle('is-soldout', !live);
+        note.textContent = !item.onPickup && !item.onDelivery
+          ? 'Hidden from both menus. Customers won\'t see it until you check a menu above.'
+          : !live ? 'Sold out everywhere it\'s offered.' : '';
+        note.hidden = !note.textContent;
+      };
+      const cb = (prop, label) => {
+        const el = h('input', { type: 'checkbox', checked: !!item[prop], 'aria-label': label });
+        el.addEventListener('change', () => { item[prop] = el.checked; markDirty(); paint(); });
+        return el;
+      };
+      const name = item.name || 'this item';
+      const box = h('div', { class: 'field' },
+        h('table', { class: 'avail' },
+          h('thead', {}, h('tr', {}, h('th', {}), h('th', { scope: 'col' }, pickupName), h('th', { scope: 'col' }, deliveryName))),
+          h('tbody', {},
+            h('tr', {}, h('th', { scope: 'row' }, 'On this menu'),
+              h('td', {}, cb('onPickup', name + ' on the ' + pickupName + ' menu')),
+              h('td', {}, cb('onDelivery', name + ' on the ' + deliveryName + ' menu'))),
+            h('tr', {}, h('th', { scope: 'row' }, 'Sold out'),
+              h('td', {}, cb('soldOutPickup', name + ' sold out for ' + pickupName)),
+              h('td', {}, cb('soldOutDelivery', name + ' sold out for ' + deliveryName))))),
+        note);
+      paint();
+      return box;
+    }
+
     function move(idx, dir) {
       const items = S.menu.items;
       const [it] = items.splice(idx, 1);
@@ -492,7 +532,8 @@
     }
 
     function addItem() {
-      const it = { id: uid('i'), name: '', description: '', badge: '', soldOut: false, image: '',
+      const it = { id: uid('i'), name: '', description: '', badge: '', image: '',
+                   onPickup: true, onDelivery: true, soldOutPickup: false, soldOutDelivery: false,
                    options: [{ id: uid('o'), label: '', price: '' }] };
       S.menu.items.push(it);
       markDirty(); renderEditor();
